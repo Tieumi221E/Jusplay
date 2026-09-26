@@ -9,6 +9,7 @@ export const ICONS = {
   volume: svg('<path d="M3.5 8h2.8L10 4.8v10.4L6.3 12H3.5z"/><path d="M13.3 7.3a3.8 3.8 0 0 1 0 5.4M15.6 5.2a6.8 6.8 0 0 1 0 9.6"/>'),
   muted: svg('<path d="M3.5 8h2.8L10 4.8v10.4L6.3 12H3.5z"/><path d="m13.5 8 4 4m0-4-4 4"/>'),
   comments: svg('<path d="M4 4.5h12a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5H9.5l-3.7 2.8v-2.8H4A1.5 1.5 0 0 1 2.5 13V6A1.5 1.5 0 0 1 4 4.5z"/><path d="M6 8.2h8M6 11h5"/>'),
+  subtitles: svg('<rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="M5.5 10.5h4M11.5 10.5h3M5.5 13h2.5M10 13h4.5"/>'),
   settings: svg('<path d="M3.5 6h7.5M15 6h1.5M3.5 14h1.5M9 14h7.5"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/>'),
   fullscreen: svg('<path d="M3.5 7.5v-4h4M12.5 3.5h4v4M16.5 12.5v4h-4M7.5 16.5h-4v-4"/>'),
   exitFullscreen: svg('<path d="M7.5 3.5v4h-4M16.5 7.5h-4v-4M12.5 16.5v-4h4M3.5 12.5h4v4"/>'),

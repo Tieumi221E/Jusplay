@@ -58,11 +58,29 @@ export interface FilterSettings {
   capPerSecond: number;
 }
 
+/** Subtitles (subs.ts). Which tracks a video shows is kept with the video. */
+export interface SubtitleSettings {
+  /** Subtitles shown at all (T). */
+  show: boolean;
+  /** With no subtitles of its own, a video gets the AI translation. */
+  ai: boolean;
+  /** Translation language: "zh", "zh-Hant", "ja", "en", "ko"; "" follows the interface language. */
+  target: string;
+  /** Text size factor. */
+  scale: number;
+  /** Language spoken in the video (the recogniser's name, e.g. "Japanese"); "" decides from the first lines. */
+  source: string;
+}
+
+export const SUB_TARGETS = ["zh", "zh-Hant", "ja", "en", "ko"];
+export const SUB_SOURCES = ["Japanese", "Chinese", "English", "Korean", "Cantonese", "French", "German", "Spanish", "Russian"];
+
 export interface Settings {
   /** 2: keepCA on by default (see merge). */
   v: 2;
   playback: { volume: number; muted: boolean; rate: number };
   comments: CommentSettings;
+  subtitles: SubtitleSettings;
   filters: FilterSettings;
   /** Per-video values keyed by Session.key. */
   videos: Record<string, { offsetMs: number }>;
@@ -89,6 +107,7 @@ export const defaults = (): Settings => ({
     area: 100,
     frameRate: "display",
   },
+  subtitles: { show: true, ai: false, target: "", scale: 1, source: "" },
   filters: {
     ngWords: [],
     ngUsers: [],
@@ -148,6 +167,10 @@ export function merge(stored: Json): Settings {
   if (!["none", "weak", "medium", "strong"].includes(f.ngShare)) f.ngShare = "none";
   f.maxLength = Math.round(clamp(f.maxLength, 0, 10000));
   f.capPerSecond = clamp(f.capPerSecond, 0, 50);
+  const sub = out.subtitles;
+  if (sub.target !== "" && !SUB_TARGETS.includes(sub.target)) sub.target = "";
+  sub.scale = clamp(sub.scale, 0.5, 2);
+  if (sub.source !== "" && !SUB_SOURCES.includes(sub.source)) sub.source = "";
   const p = out.playback;
   p.volume = clamp(p.volume, 0, 1);
   p.rate = clamp(p.rate, 0.25, 4);

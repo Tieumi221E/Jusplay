@@ -12,6 +12,9 @@ import { L, applyStatic, bindSwitches, onLang, onTheme, type StaticText } from "
 import { ICONS } from "./icons.ts";
 import { episodeLayer, type Episode } from "./episodes.ts";
 import { onBack, setTitle, host, framed, BACK_KEYS } from "./nav.ts";
+import { Subtitles } from "./subs.ts";
+import { buildAiConfig } from "./aiconfig.ts";
+import { subSlots, SUB_QUICK } from "./ui.ts";
 
 interface CommentsInfo {
   source: "manual" | "attachment" | "same-name" | "none";
@@ -66,6 +69,9 @@ const PLAYER_TEXT: StaticText[] = [
   ["#rate", "aria-label", "倍速", "再生速度"],
   ["#toggle-comments", "aria-label", "弹幕开关", "コメント表示"],
   ["#open-quick", "aria-label", "弹幕设置", "コメント設定"],
+  ["#open-subs", "aria-label", "字幕", "字幕"],
+  ["#subcard-file", "textContent", "加载字幕文件…", "字幕ファイルを読み込む…"],
+  ["#subcard-more", "textContent", "更多字幕设置", "字幕の詳細設定"],
   ["#fullscreen", "aria-label", "全屏", "全画面"],
   ["#open-help", "textContent", "快捷键", "ショートカット"],
   ["#open-settings", "textContent", "更多设置", "詳細設定"],
@@ -267,6 +273,9 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   const offsetOf = () => sess.offsetMs ?? sess.comments.offsetMs;
   const clock = new Clock(video, signal);
   const overlay = new Overlay(video, canvas, clock, s.comments, offsetOf(), signal);
+  // Subtitles: files, the video's own tracks, AI (subs.ts).
+  const subtitles = new Subtitles(video, sess.id, sess.media.duration, s.subtitles, $("#subs"), $("#subs-top"), signal);
+  const ai = subtitles.ai;
   let stats: FilterStats | null = null;
   const seekBar = new SeekBar($("#density"), $("#seektip"), $("#seek"), video, sess.media.duration, () => overlay.offset / 1000, signal);
   const rebuild = async () => {
@@ -309,12 +318,88 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
       clearTimeout(rebuildTimer);
       rebuildTimer = window.setTimeout(rebuild, 150);
     } else overlay.restyle(s.comments);
+    subtitles.update();
     updateToggles();
     save();
+  };
+  const noAi = () => L("AI 字幕还不能用：在“更多设置 → 字幕”里下载推荐模型，或选择自己的模型 / 在线接口",
+    "AI 字幕はまだ使えません。「詳細設定 → 字幕」で推奨モデルをダウンロードするか、自分のモデル / オンライン API を選んでください");
+  const toggleSubs = () => {
+    s.subtitles.show = !s.subtitles.show;
+    onSettings();
+    subCard.refresh();
+    hud(null, s.subtitles.show ? L("字幕 开", "字幕 オン") : L("字幕 关", "字幕 オフ"));
+  };
+  // The track rows show this video's tracks (subs.ts).
+  subSlots.options = () => subtitles.tracks.map((t) => [t.key, t.label, t.disabled] as [string, string, boolean?]);
+  subSlots.get = (slot) => (!s.subtitles.show && slot === 0 ? "off" : slot ? subtitles.pick2 : subtitles.pick);
+  subSlots.set = (slot, key) => {
+    void subtitles.choose(slot, key).then(() => {
+      const err = subtitles.errorOf(key);
+      if (err) toast(`${L("无法读取字幕：", "字幕を読み込めません：")}${err.slice(0, 200)}`, 5000);
+    });
+    if (key.startsWith("ai:") && !ai.available) toast(noAi(), 6000);
   };
 
   const panel = buildPanel($("#panel-body"), s, onSettings);
   const quick = buildQuick($("#quick-body"), s, onSettings);
+  const subCard = buildQuick($("#subcard-body"), s, onSettings, SUB_QUICK);
+  // The subtitles section of the settings: loading a file; the AI lines:
+  // how far they are made, by which models (machine-made text says so),
+  // making the whole episode; and the AI backends.
+  const subsBox = $("#panel-body [data-section=subs]");
+  const pickSub = document.createElement("button");
+  pickSub.className = "link";
+  pickSub.onclick = async () => {
+    const f = (window as unknown as { kpPickSubtitle?: () => Promise<string> }).kpPickSubtitle;
+    if (!f) return toast(L("这个窗口不能打开文件对话框", "このウィンドウではファイル選択ダイアログを開けません"));
+    const path = await f();
+    if (!path) return;
+    const err = await subtitles.useFile(path);
+    if (err) toast(`${L("无法加载：", "読み込めません：")}${err.slice(0, 200)}`, 5000);
+  };
+  const aiHead = document.createElement("h4");
+  const subsInfo = document.createElement("div");
+  subsInfo.className = "stats";
+  const makeAll = document.createElement("button");
+  makeAll.className = "link";
+  makeAll.onclick = () => ai.makeAll();
+  const aiBox = document.createElement("div");
+  aiBox.className = "ai-config";
+  // Rows added by buildPanel come first: the track rows, size, AI toggle,
+  // spoken and target language. Then these.
+  subsBox.insertBefore(pickSub, subsBox.children[3] ?? null);
+  subsBox.append(aiHead, subsInfo, makeAll, aiBox);
+  const relabelAi = buildAiConfig(aiBox, () => {
+    void ai.reload().then(() => subtitles.refresh());
+  }, signal);
+  function renderSubsState(): void {
+    pickSub.textContent = L("加载字幕文件…", "字幕ファイルを読み込む…");
+    aiHead.textContent = L("AI 字幕", "AI 字幕");
+    const st = ai.state;
+    makeAll.textContent = L("生成整集 AI 字幕", "全編の AI 字幕を作る");
+    makeAll.hidden = st.kind === "unavailable" || st.kind === "done" || ai.makingAll;
+    const lines: string[] = [];
+    if (st.kind === "unavailable") lines.push(noAi());
+    else if (st.kind === "error") lines.push(`${L("出错：", "エラー：")}${st.message}`);
+    else {
+      const pctDone = Math.min(100, Math.round((st.covered / st.duration) * 100));
+      lines.push(st.kind === "done" ? L("整集已生成", "全編作成済み")
+        : `${L("已生成", "作成済み")} ${pctDone}%${st.kind === "working" ? L("，生成中…", "、作成中…") : ""}`);
+    }
+    if (ai.models && ai.available) lines.push(`${L("机器生成：", "機械生成：")}${ai.models.asr}${ai.models.mt ? " / " + ai.models.mt : ""}`);
+    subsInfo.replaceChildren(...lines.map((t) => Object.assign(document.createElement("div"), { textContent: t })));
+  }
+  ai.onState = renderSubsState;
+  subtitles.onTracks = () => {
+    quick.relabel();
+    subCard.relabel();
+    subCard.relabel();
+    panel.relabel();
+    renderSubsState();
+    updateToggles();
+  };
+  void subtitles.start();
   // The layout is built in slices that hand the main thread back (nico/
   // README.md), so it starts at once and overlaps the video's start instead
   // of waiting for the first frame. Most of a first build is the browser
@@ -331,7 +416,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     }
     saveProgress();
     // Panels and the episode layer close with their episode (choosing one is going there).
-    for (const l of [quickLayer, panelLayer, helpLayer, episodes.layer]) l.hide();
+    for (const l of [quickLayer, subLayer, panelLayer, helpLayer, episodes.layer]) l.hide();
   });
 
   // ---- comment source ----
@@ -507,6 +592,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   };
   function updateToggles(): void {
     $("#toggle-comments").classList.toggle("off", !s.comments.enabled);
+    $("#open-subs").classList.toggle("off", !s.subtitles.show || subtitles.pick === "off");
     setIcon($("#mute"), video.muted || video.volume === 0 ? "muted" : "volume");
   }
   video.addEventListener("volumechange", updateToggles, { signal });
@@ -529,17 +615,35 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   const panelEl = $("#panel");
   const layers = new LayerStack(signal);
   const quickLayer = new Layer($("#quick"), layers, $("#open-quick"));
+  const subLayer = new Layer($("#subcard"), layers, $("#open-subs"));
   const panelLayer = new Layer(panelEl, layers);
   const helpLayer = new Layer($("#help"), layers);
   const toggleQuick = () => {
     if (!quickLayer.isOpen) {
       quick.refresh();
+      subLayer.hide();
       episodes.layer.hide();
     }
     quickLayer.toggle();
   };
+  // The subtitle card: its own button, next to the comments' (T shows or hides them).
+  const toggleSubCard = () => {
+    if (!subLayer.isOpen) {
+      subCard.refresh();
+      quickLayer.hide();
+      episodes.layer.hide();
+    }
+    subLayer.toggle();
+  };
+  $("#open-subs").onclick = toggleSubCard;
+  $("#subcard-file").onclick = () => pickSub.click();
+  $("#subcard-more").onclick = () => {
+    openPanel();
+    $("#panel-body [data-section=subs]").scrollIntoView({ block: "start" });
+  };
   const openPanel = () => {
     quickLayer.hide();
+    subLayer.hide();
     episodes.layer.hide();
     panel.refresh();
     panelLayer.show();
@@ -558,7 +662,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
       ["Space / K", "播放 / 暂停", "再生 / 一時停止"], ["← →", "后退 / 前进 5 秒（Shift：1 秒）", "5 秒戻る / 進む（Shift：1 秒）"],
       ["↑ ↓ / " + L("滚轮", "ホイール"), "音量", "音量"], ["0–9", "跳到 0%–90%", "0%–90% へ移動"],
       [", .", "暂停时逐帧", "一時停止中にコマ送り"], ["[ ]", "倍速", "再生速度"], ["M", "静音", "ミュート"],
-      ["C", "弹幕开关", "コメント表示"], ["- =", "弹幕偏移 ±100 ms", "コメントのずれ ±100 ms"], ["S", "弹幕设置", "コメント設定"],
+      ["C", "弹幕开关", "コメント表示"], ["T", "字幕开关", "字幕表示"], ["- =", "弹幕偏移 ±100 ms", "コメントのずれ ±100 ms"], ["S", "弹幕设置", "コメント設定"],
       ["F / " + L("双击", "ダブルクリック"), "全屏", "全画面"], ["N P", "下一集 / 上一集", "次の話 / 前の話"],
       ["E", "剧集", "エピソード"], [BACK_KEYS, "返回媒体库", "ライブラリに戻る"], ["?", "快捷键", "ショートカット"], ["Esc", "关闭 / 退出全屏", "閉じる / 全画面を終了"],
     ];
@@ -698,6 +802,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
       case "n": go(sess.next); break;
       case "p": go(sess.prev); break;
       case "c": cbtn.click(); break;
+      case "t": toggleSubs(); break;
       case "s": toggleQuick(); break;
       case "e": if (hasSiblings) episodes.toggle(); break;
       case "?": toggleHelp(); break;
@@ -716,7 +821,10 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     renderInfo();
     updateMeta();
     renderHelp();
+    renderSubsState();
     if (firstLang) return void (firstLang = false);
+    subtitles.onTracks();
+    relabelAi();
     setHeading();
     panel.relabel();
     quick.relabel();
@@ -884,6 +992,33 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     }
     const qa = video.getVideoPlaybackQuality();
     await fetch("api/selftest", { method: "POST", body: JSON.stringify({ from, seconds, end: video.currentTime, frames: qa.totalVideoFrames, dropped: qa.droppedVideoFrames, events, samples }) });
+    return;
+  }
+  if (q.has("selftest") && q.has("subs")) {
+    // Subtitles while watching (-subs FROM,SECONDS): made just ahead of the
+    // playhead; reports how far ahead they stay and what each request cost.
+    const [from, seconds] = q.get("subs")!.split(",").map(Number);
+    video.muted = true;
+    s.subtitles.show = true;
+    await subtitles.choose(0, "ai:tr");
+    await subtitles.choose(1, "ai:src");
+    video.currentTime = from;
+    await new Promise((r) => video.addEventListener("seeked", r, { once: true }));
+    const t0 = performance.now();
+    await video.play().catch(() => undefined);
+    const samples: string[] = [];
+    let firstCueMs: number | null = null;
+    for (let i = 0; i < seconds * 2; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const now = video.currentTime;
+      const ahead = ai.covered.find(([a, b]) => a <= now + 0.05 && b > now);
+      if (firstCueMs === null && ai.cues.some((c) => c.start >= from - 1)) firstCueMs = Math.round(performance.now() - t0);
+      if (i % 4 === 3) samples.push(`${now.toFixed(1)} ahead ${ahead ? (ahead[1] - now).toFixed(1) : "none"} ${ai.state.kind}`);
+    }
+    await fetch("api/selftest", { method: "POST", body: JSON.stringify({
+      from, seconds, firstCueMs, state: ai.state, models: ai.models, timings: ai.timings, samples,
+      cues: ai.cues.filter((c) => c.start >= from - 1 && c.start < from + seconds + 60),
+    }) });
     return;
   }
   if (q.has("selftest") && q.has("layout")) {

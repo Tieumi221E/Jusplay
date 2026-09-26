@@ -36,3 +36,6 @@ bin/
 
 # Folder records written by the app into a media folder
 .jusplay/
+
+# Optional AI component (llama.cpp runtime and model files), not distributed with the source
+components/

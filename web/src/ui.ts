@@ -45,7 +45,7 @@ type Setter<T> = (s: Settings, v: T) => void;
 type Field = { id: string } & (
   | { kind: "toggle"; label: string; get: Getter<boolean>; set: Setter<boolean>; hint?: string }
   | { kind: "range"; label: string; min: number; max: number; step: number; fmt: (v: number) => string; get: Getter<number>; set: Setter<number>; hint?: string }
-  | { kind: "select"; label: string; options: [string, string][]; get: Getter<string>; set: Setter<string>; hint?: string }
+  | { kind: "select"; label: string; options: [string, string, boolean?][]; get: Getter<string>; set: Setter<string>; hint?: string }
   | { kind: "color"; label: string; get: Getter<string>; set: Setter<string> }
   | { kind: "lines"; label: string; placeholder: string; get: Getter<string[]>; set: Setter<string[]>; hint?: string }
   | { kind: "datetime"; label: string; get: Getter<string>; set: Setter<string>; hint?: string }
@@ -89,6 +89,46 @@ const display = (): Field[] => [
   { id: "mode", kind: "select", label: L("渲染模式", "描画モード"), options: [["default", L("自动（按投稿时间）", "自動（投稿日時で判定）")], ["html5", "HTML5"], ["flash", "Flash"]], get: (s) => s.comments.mode, set: (s, v) => (s.comments.mode = v as Settings["comments"]["mode"]) },
   { id: "keepCA", kind: "toggle", label: L("评论画位置修正", "コメントアート位置補正"), get: (s) => s.comments.keepCA, set: (s, v) => (s.comments.keepCA = v), hint: "niconicomments keepCA" },
   { id: "frameRate", kind: "select", label: L("动画帧率", "描画フレームレート"), options: [["display", L("跟随显示器", "ディスプレイに合わせる")], ["60", L("60 帧", "60 fps")], ["video", L("跟随视频帧", "動画のフレームに合わせる")]], get: (s) => s.comments.frameRate, set: (s, v) => (s.comments.frameRate = v as "display" | "60" | "video") },
+];
+
+/**
+ * The subtitle tracks of the video playing, for the two track rows: set by
+ * the player page (subs.ts), since they are the video's, not settings.
+ */
+export const subSlots = {
+  options: (): [string, string, boolean?][] => [["off", L("关", "オフ")]],
+  get: (_slot: 0 | 1): string => "off",
+  set: (_slot: 0 | 1, _key: string): void => undefined,
+};
+
+// Subtitles: which tracks, how big; AI: what is spoken, into what language.
+const subtitleFields = (): Field[] => [
+  {
+    id: "subPick", kind: "select", label: L("字幕", "字幕"), options: subSlots.options(),
+    get: () => subSlots.get(0), set: (_s, v) => subSlots.set(0, v),
+    hint: L("外挂、内嵌或 AI 生成的字幕；快捷键 T 显示 / 隐藏", "外部・内蔵・AI 生成の字幕。ショートカット T で表示 / 非表示"),
+  },
+  {
+    id: "subPick2", kind: "select", label: L("第二字幕", "第 2 字幕"), options: subSlots.options(),
+    get: () => subSlots.get(1), set: (_s, v) => subSlots.set(1, v),
+    hint: L("显示在主字幕下方，较小，例如原文", "メイン字幕の下に小さく表示（原文など）"),
+  },
+  { id: "subScale", kind: "range", label: L("字幕字号", "字幕の文字サイズ"), min: 0.5, max: 2, step: 0.05, fmt: pct, get: (s) => s.subtitles.scale, set: (s, v) => (s.subtitles.scale = v) },
+  {
+    id: "subAi", kind: "toggle", label: L("没有字幕时用 AI 生成", "字幕がなければ AI で作る"), get: (s) => s.subtitles.ai, set: (s, v) => (s.subtitles.ai = v),
+    hint: L("视频没有外挂或内嵌字幕时，自动显示 AI 译文；也可随时在上方选择 AI 字幕", "外部・内蔵字幕がない動画では AI 翻訳を自動で表示します。上でいつでも AI 字幕を選べます"),
+  },
+  {
+    id: "subSource", kind: "select", label: L("原声语言", "音声の言語"),
+    options: [["", L("自动（按开头的台词判断）", "自動（最初のセリフで判断）")], ["Japanese", "日本語"], ["Chinese", "中文"], ["English", "English"], ["Korean", "한국어"], ["Cantonese", "粵語"], ["French", "Français"], ["German", "Deutsch"], ["Spanish", "Español"], ["Russian", "Русский"]],
+    get: (s) => s.subtitles.source, set: (s, v) => (s.subtitles.source = v),
+    hint: L("指定后逐句按这种语言识别，不再逐句判断；已生成的字幕不变", "指定すると、1 行ずつ判断せずこの言語として認識します。作成済みの字幕は変わりません"),
+  },
+  {
+    id: "subTarget", kind: "select", label: L("翻译为", "翻訳先"),
+    options: [["", L("跟随界面语言", "表示言語に合わせる")], ["zh", "简体中文"], ["zh-Hant", "繁體中文"], ["ja", "日本語"], ["en", "English"], ["ko", "한국어"]],
+    get: (s) => s.subtitles.target, set: (s, v) => (s.subtitles.target = v),
+  },
 ];
 
 const filters = (): Field[] => [
@@ -172,8 +212,17 @@ function makeRow(def: Field, s: Settings, changed: () => void): Row {
     case "select": {
       const g = () => f as Extract<Field, { kind: "select" }>;
       const i = el("select");
-      for (const [v] of g().options) i.append(el("option", { value: v }));
-      texts = () => g().options.forEach(([, t], k) => (i.options[k].textContent = t));
+      // Options may change (a video's subtitle tracks): rebuilt when they do.
+      texts = () => {
+        const opts = g().options;
+        if (i.options.length !== opts.length || opts.some(([v], k) => i.options[k].value !== v)) {
+          i.replaceChildren(...opts.map(([v]) => el("option", { value: v })));
+        }
+        opts.forEach(([, t, off], k) => {
+          i.options[k].textContent = t;
+          i.options[k].disabled = !!off;
+        });
+      };
       i.onchange = () => (g().set(s, i.value), changed());
       refresh = () => (i.value = g().get(s));
       r.append(i);
@@ -260,10 +309,11 @@ export function buildPanel(root: HTMLElement, s: Settings, changed: () => void):
   root.replaceChildren(); // built again for each episode
   const rows = new Map<string, Row>();
   const titles: [HTMLElement, () => string][] = [];
-  const section = (title: () => string, fields: Field[]) => {
+  const section = (title: () => string, fields: Field[], id = "") => {
     const h = el("h3", {}, title());
     titles.push([h, title]);
     const box = el("section", {}, h);
+    if (id) box.dataset.section = id;
     for (const f of fields) {
       const r = makeRow(f, s, changed);
       rows.set(f.id, r);
@@ -273,6 +323,7 @@ export function buildPanel(root: HTMLElement, s: Settings, changed: () => void):
     return box;
   };
   section(() => L("显示", "表示"), display());
+  section(() => L("字幕", "字幕"), subtitleFields(), "subs");
   const filt = section(() => L("过滤", "フィルター"), filters());
   const stats = el("div", { class: "stats" });
   filt.append(stats);
@@ -297,7 +348,7 @@ export function buildPanel(root: HTMLElement, s: Settings, changed: () => void):
     refresh: () => rows.forEach((r) => r.refresh()),
     setStats,
     relabel() {
-      const defs = byId([...display(), ...filters()]);
+      const defs = byId([...display(), ...subtitleFields(), ...filters()]);
       rows.forEach((r, id) => r.relabel(defs.get(id)!));
       for (const [h, t] of titles) h.textContent = t();
       setStats(last);
@@ -307,16 +358,18 @@ export function buildPanel(root: HTMLElement, s: Settings, changed: () => void):
 
 /** The settings people change while watching, for the quick card. */
 export const QUICK = ["enabled", "opacity", "scale", "area", "limit", "frameRate"];
+/** The subtitle card (its own button): tracks, size, AI when there are none. */
+export const SUB_QUICK = ["subPick", "subPick2", "subScale", "subAi"];
 
 export interface Quick {
   refresh(): void;
   relabel(): void;
 }
 
-export function buildQuick(root: HTMLElement, s: Settings, changed: () => void): Quick {
+export function buildQuick(root: HTMLElement, s: Settings, changed: () => void, ids = QUICK): Quick {
   root.replaceChildren();
-  const defs = byId(display());
-  const rows = QUICK.map((id) => {
+  const defs = byId([...display(), ...subtitleFields()]);
+  const rows = ids.map((id) => {
     const r = makeRow(defs.get(id)!, s, changed);
     root.append(r.el);
     return [id, r] as const;
@@ -324,7 +377,7 @@ export function buildQuick(root: HTMLElement, s: Settings, changed: () => void):
   return {
     refresh: () => rows.forEach(([, r]) => r.refresh()),
     relabel() {
-      const d = byId(display());
+      const d = byId([...display(), ...subtitleFields()]);
       for (const [id, r] of rows) r.relabel(d.get(id)!);
     },
   };

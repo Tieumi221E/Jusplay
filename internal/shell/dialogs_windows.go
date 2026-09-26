@@ -126,6 +126,16 @@ func (win *Window) bindDialogs() error {
 			return pickFile(win.hwnd, "选择弹幕文件",
 				"弹幕文件 (*.json, *.xml, *.zip)", "*.json;*.xml;*.zip", "所有文件", "*.*")
 		},
+		"kpPickSubtitle": func() string {
+			return pickFile(win.hwnd, "选择字幕文件",
+				"字幕文件 (*.srt, *.ass, *.ssa, *.vtt)", "*.srt;*.ass;*.ssa;*.vtt", "所有文件", "*.*")
+		},
+		"kpPickModel": func() string {
+			return pickFile(win.hwnd, "选择模型文件", "GGUF 模型 (*.gguf)", "*.gguf", "所有文件", "*.*")
+		},
+		"kpPickProgram": func() string {
+			return pickFile(win.hwnd, "选择 llama-server", "程序 (*.exe)", "*.exe")
+		},
 		"kpPickSnapshotFolder": func() string { return pickFolder(win.hwnd, "选择快照文件夹") },
 		"kpPickFolder":         func() string { return pickFolder(win.hwnd, "选择要加入媒体库的文件夹") },
 		"kpReveal":             func(path string) error { return reveal(path) },

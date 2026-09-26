@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/Tieumi221E/Jusplay/internal/ai"
 	"github.com/Tieumi221E/Jusplay/internal/appdir"
 	"github.com/Tieumi221E/Jusplay/internal/comments"
 	"github.com/Tieumi221E/Jusplay/internal/library"
@@ -31,6 +32,7 @@ type appFlags struct {
 	layout          bool
 	shots, shotsDir string
 	trace           string
+	subs            string
 	dock            bool
 	switchEps       bool
 	scroll          bool
@@ -72,6 +74,7 @@ func cmdPlay(args []string) error {
 	fs.StringVar(&a.shotsDir, "shots-dir", "", "with -shots: where the PNGs go")
 	fs.BoolVar(&a.switchEps, "switch", false, "with -selftest: switch to every other episode of the series on the page and time each to its first frame")
 	fs.BoolVar(&a.dock, "dock", false, "with -selftest: open and close the episode layer while playing and time the frames of the move")
+	fs.StringVar(&a.subs, "subs", "", "with -selftest: FROM,SECONDS: play from FROM with subtitles made while watching (needs the AI component) and report timings and lines")
 	fs.StringVar(&a.trace, "trace", "", "with -selftest: FROM,SECONDS: seek to FROM, play, and report the playhead, buffered ranges and media events every 0.5 s")
 	pos, err := parse(fs, args, 1)
 	if err != nil {
@@ -131,6 +134,14 @@ func runApp(a appFlags, video, page string) error {
 	srv := player.New(lib, ui.FS(), player.OpenSettings(filepath.Join(dir, "settings.json")), filepath.Join(dir, "ui.json"), temp)
 	srv.Log = logger
 	srv.LogText = mem.String
+	// AI subtitles: the component folder (recommended models and runtime,
+	// downloaded on request) beside the executable, else in the data folder;
+	// the backends' settings in ai.json. Nothing starts until subtitles are
+	// first asked for.
+	eng := ai.New(componentDir(dir), filepath.Join(dir, "ai.json"))
+	eng.Log = logger.Printf
+	logger.Printf("ai component folder %s", eng.Dir)
+	srv.SetAI(eng)
 	base, err := srv.Start()
 	if err != nil {
 		return err
@@ -167,6 +178,9 @@ func runApp(a appFlags, video, page string) error {
 			if a.shots != "" {
 				q.Set("shots", a.shots)
 				srv.ShotsDir = a.shotsDir
+			}
+			if a.subs != "" {
+				q.Set("subs", a.subs)
 			}
 			if a.trace != "" {
 				q.Set("trace", a.trace)
@@ -259,4 +273,22 @@ func clearTemp(t string) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// componentDir is where the AI component lives: "components\ai" beside the
+// executable when it is there or can be made there (a portable copy keeps
+// it), else in the data folder.
+func componentDir(data string) string {
+	if exe, err := os.Executable(); err == nil {
+		d := filepath.Join(filepath.Dir(exe), "components", "ai")
+		if _, err := os.Stat(d); err == nil {
+			return d
+		}
+		if f, err := os.CreateTemp(filepath.Dir(exe), ".probe-*"); err == nil {
+			f.Close()
+			os.Remove(f.Name())
+			return d
+		}
+	}
+	return filepath.Join(data, "components", "ai")
 }

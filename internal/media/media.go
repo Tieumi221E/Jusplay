@@ -74,6 +74,9 @@ type Media struct {
 	// AudioNote says why there is no audio track when the file has one the
 	// engine cannot play.
 	AudioNote string `json:"audioNote,omitempty"`
+	// Subtitles are the file's own subtitle tracks (Matroska), read only
+	// when one is chosen (SubtitleEvents).
+	Subtitles []SubtitleTrack `json:"subtitles,omitempty"`
 }
 
 // Open indexes path; see OpenCached.
@@ -240,6 +243,12 @@ func openMatroska(r io.ReaderAt, size int64, cache string) (*Media, error) {
 		m.Audio.init = fmp4.Init(fmp4.Track{Timescale: m.Audio.timescale, Channels: at.Channels, SampleRate: ac.Rate, Language: at.Language, Entry: ac.Entry})
 		m.AudioNote = ""
 		break
+	}
+	for _, t := range f.Tracks {
+		if t.Type == 17 && t.Enabled {
+			m.Subtitles = append(m.Subtitles, SubtitleTrack{Number: t.Number, Codec: t.CodecID, Language: t.Language, Name: t.Name, Default: t.Default,
+				Text: textSubtitle[t.CodecID] && !t.Encrypted})
+		}
 	}
 	if fresh && cache != "" {
 		keep := &index{tracks: map[uint64][]sample{vt.Number: idx.tracks[vt.Number]}}

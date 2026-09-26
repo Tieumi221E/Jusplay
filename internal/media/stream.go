@@ -80,6 +80,25 @@ func (m *Media) OpenStreamN(ctx context.Context, kind string, k float64, n int) 
 	return &Stream{Offset: -float64(t.shift) / ts, Start: float64(t.samples[j].pts) / ts, First: j, m: m, t: t, ctx: ctx, limit: n}, nil
 }
 
+// OpenAudioRange streams the audio samples presented from t0 to t1 (seconds),
+// for the page to decode for speech recognition (api/subs/audio).
+func (m *Media) OpenAudioRange(ctx context.Context, t0, t1 float64) (*Stream, error) {
+	st, err := m.OpenStreamN(ctx, "audio", t0, 0)
+	if err != nil {
+		return nil, err
+	}
+	end := int64(math.Ceil(t1 * float64(st.t.timescale)))
+	n := 0
+	for _, s := range st.t.samples[st.First:] {
+		if s.pts >= end {
+			break
+		}
+		n++
+	}
+	st.limit = max(n, 1)
+	return st, nil
+}
+
 // WriteTo writes the stream: the init segment, then the fragments, each
 // in one write (the HTTP layer flushes each write).
 func (s *Stream) WriteTo(w io.Writer) (int64, error) {

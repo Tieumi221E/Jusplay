@@ -217,6 +217,8 @@ type Server struct {
 
 	activeStreams atomic.Int64
 	openedStreams atomic.Int64
+
+	ai subsState
 }
 
 const keepSessions = 3
@@ -337,6 +339,7 @@ func (s *Server) Start() (string, error) {
 }
 
 func (s *Server) Close() error {
+	s.closeAI()
 	s.mu.Lock()
 	for _, sess := range s.sessions {
 		sess.cancelAll()
@@ -542,6 +545,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if strings.HasPrefix(p, "api/library") || p == "api/thumb" || p == "api/thumbsrc" {
 		s.libraryAPI(w, r, p)
+		return
+	}
+	if p == "api/ai" || strings.HasPrefix(p, "api/ai/") {
+		s.aiAPI(w, r, p)
+		return
+	}
+	if p == "api/subs" || strings.HasPrefix(p, "api/subs/") {
+		s.subsAPI(w, r, p)
 		return
 	}
 	q := r.URL.Query()

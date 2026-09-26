@@ -69,6 +69,13 @@ type Entry struct {
 	// OffsetMs is the comment offset chosen for this file (nil: the one
 	// its comment data records).
 	OffsetMs *int64 `json:"offsetMs,omitempty"`
+	// SubPick and SubPick2 are the subtitle tracks chosen for this file
+	// (primary, secondary): "file:<name>" beside it, "manual", "mkv:<n>",
+	// "ai:src", "ai:tr"; "off" for none; "" not chosen yet. SubFile is a
+	// subtitle file picked by hand ("manual").
+	SubPick  string `json:"subPick,omitempty"`
+	SubPick2 string `json:"subPick2,omitempty"`
+	SubFile  string `json:"subFile,omitempty"`
 }
 
 // Library is the media folders and what is known about the files in them.
@@ -586,6 +593,7 @@ func (l *Library) Scan() (ScanStats, error) {
 						st.Changed++
 						ne.Position, ne.Watched, ne.LastPlayed, ne.Comments, ne.OffsetMs, ne.CommentCount =
 							old.Position, old.Watched, old.LastPlayed, old.Comments, old.OffsetMs, old.CommentCount
+						ne.SubPick, ne.SubPick2, ne.SubFile = old.SubPick, old.SubPick2, old.SubFile
 					} else {
 						st.Added++
 					}
