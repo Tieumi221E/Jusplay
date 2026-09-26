@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jusplay.invalid/schema/report/0",
+  "title": "jusplay snapshot capture report v0",
+  "description": "Written by the collector (or importer). 'verified-visible' only means the range visible to this capture was checked, never that history is complete.",
+  "type": "object",
+  "required": ["schema", "status", "targets", "lossy"],
+  "properties": {
+    "schema": { "enum": ["jusplay-report/0", "kantanplay-report/0"] },
+    "status": { "enum": ["verified-visible", "partial", "unknown"] },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["threadId", "fork", "status", "requests", "failures"],
+        "properties": {
+          "threadId": { "type": "string", "minLength": 1 },
+          "fork": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["verified-visible", "partial", "unknown", "failed"] },
+          "requests": { "type": "integer", "minimum": 0 },
+          "failures": { "type": "integer", "minimum": 0 },
+          "apiCommentCount": { "type": ["integer", "null"] },
+          "terminationEvidence": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "lossy": {
+      "description": "Known ways this snapshot differs from the original API data.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  }
+}

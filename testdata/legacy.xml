@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<packet><thread thread="2000" />
+<leaf thread="2000" count="6"/>
+<chat thread="2000" no="1" vpos="0" date="1767193200" date_usec="250000" premium="1" anonymity="1" user_id="a" mail="ue　red  big">A &amp; B &#x3042; &lt;b&gt;</chat>
+<chat thread="2000" no="2" vpos="150" date="1767193201" fork="1" mail="">@逆 全</chat>
+<chat thread="2000" no="3" vpos="200" date="1767193202" user_id="">no user id</chat>
+<chat thread="2000" no="4" vpos="300" date="1767193203" user_id="b" deleted="1"></chat>
+<chat thread="2000" no="5" vpos="400" date="1767193204" user_id="c" leaf="1" mystery="x">line1
+line2</chat>
+<chat thread="2000" no="6" date="1767193205" user_id="d">no vpos</chat>
+<chat thread="2000" no="7" vpos="500" date="1767193206" user_id="e" premium="3" score="-4800" nicoru="2">scored</chat>
+</packet>

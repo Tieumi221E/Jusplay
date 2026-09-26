@@ -1,0 +1,37 @@
+{
+  "schema": "kantanplay-report/0",
+  "status": "partial",
+  "targets": [
+    {
+      "threadId": "1000",
+      "fork": "owner",
+      "status": "verified-visible",
+      "requests": 1,
+      "failures": 0,
+      "apiCommentCount": 2,
+      "terminationEvidence": "single page"
+    },
+    {
+      "threadId": "1001",
+      "fork": "main",
+      "status": "partial",
+      "requests": 2,
+      "failures": 0,
+      "apiCommentCount": 13,
+      "terminationEvidence": null
+    },
+    {
+      "threadId": "1001",
+      "fork": "easy",
+      "status": "partial",
+      "requests": 2,
+      "failures": 1,
+      "apiCommentCount": 1,
+      "terminationEvidence": null
+    }
+  ],
+  "lossy": [],
+  "notes": [
+    "synthetic: every value is made up"
+  ]
+}

@@ -1,0 +1,344 @@
+/* Player. Controls float over the picture as translucent "glass" without
+   backdrop-filter: blurring what is behind them has to be redone for every
+   video frame, and measured +27 % of a core and +230 MB while visible over
+   playback (docs/architecture.md). Hidden, they are also visibility:hidden. */
+/* The player's own colours; the glass is shared (tokens.css). The letterbox
+   follows the theme; the picture does not. */
+:root {
+  --bg: #000;
+  --stage: #000; /* around the picture when its shape differs from the window's */
+  --glass: var(--glass-bar);
+  --density: rgba(255, 255, 255, .3);
+  --density-played: rgba(111, 195, 255, .8);
+  --buffered: rgba(255, 255, 255, .32);
+  --error-bg: rgba(70, 18, 22, .9);
+  --error-fg: #ffd9d9;
+  --sheen: rgba(160, 200, 255, .1);
+}
+:root[data-theme=light] {
+  --bg: #fff;
+  --stage: #fff;
+  --density: rgba(40, 80, 160, .26);
+  --density-played: rgba(43, 111, 230, .7);
+  --buffered: rgba(40, 80, 160, .2);
+  --error-bg: rgba(255, 240, 240, .97);
+  --error-fg: #8f1d1d;
+  --sheen: rgba(255, 255, 255, .7);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px/1.45 var(--font); overflow: hidden; user-select: none;
+  -webkit-font-smoothing: antialiased; }
+button, select, input, textarea { font: inherit; color: inherit; }
+/* Every control: hover 8 %, press 12 % and a small spring back (docs/design.md §二.3).
+   Only colour and transform change: nothing re-lays out. */
+button { background: transparent; border: 0; padding: 5px 10px; border-radius: var(--r-sm); cursor: pointer;
+  transition: background-color var(--t-fast) linear, color var(--t-fast) linear, opacity var(--t-fast) linear, transform var(--spring-snappy-t) var(--spring-snappy); }
+button:hover { background: var(--field-hover); }
+button:active { transform: scale(calc(1 - .06 * var(--move))); transition-duration: 60ms; }
+button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.off { opacity: .4; }
+.grow { flex: 1; }
+
+.glass { background: var(--glass); border: 1px solid var(--glass-line); box-shadow: var(--shadow), inset 0 1px 0 var(--glass-hi); }
+/* Over the playing picture: no drop shadow either. Its soft edge spreads far
+   beyond the element, and all of it is recomposited with every comment frame. */
+.chrome.glass, .chrome .glass { box-shadow: inset 0 1px 0 var(--glass-hi); }
+
+.icon { display: inline-grid; place-items: center; width: 36px; height: 36px; padding: 0; border-radius: var(--r-cap); color: inherit; text-decoration: none;
+  transition: background-color var(--t-fast) linear, transform var(--spring-snappy-t) var(--spring-snappy); }
+.icon svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.icon svg .f { fill: currentColor; stroke: none; }
+.icon.big { width: 42px; height: 42px; }
+.icon.big svg { width: 22px; height: 22px; }
+.icon.round { border-radius: 50%; }
+.icon:hover { background: var(--field-hover); }
+.icon:active { transform: scale(calc(1 - .1 * var(--move))); transition-duration: 60ms; }
+button.lang { height: 28px; padding: 0 11px; font-size: 12px; border-radius: var(--r-cap); border: 1px solid var(--line); color: var(--muted); }
+button.lang:hover { color: var(--fg); }
+button.primary { background: var(--grad); color: #fff; font-weight: 600; box-shadow: var(--glow); }
+button.primary:hover { filter: brightness(1.08); background: var(--grad); }
+button.link { padding: 6px 10px; color: var(--muted); font-size: 12.5px; }
+button.link:hover { color: var(--fg); }
+button.link.more { color: var(--accent); font-weight: 600; }
+button.link.more::after { content: " ›"; }
+kbd { display: inline-block; min-width: 20px; padding: 0 6px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--field);
+  font: 600 11.5px/20px var(--font); text-align: center; color: var(--fg); }
+
+/* The picture always fills the window and never moves: the controls float
+   over it, so showing or hiding them, or the episode layer, never resizes
+   the video or the comment canvas. */
+#stage { position: fixed; inset: 0; background: var(--stage); }
+video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--stage); }
+/* Arriving from the library: the thumbnail, grown into place by the page
+   transition, until the first real frame is presented. */
+#morph { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; view-transition-name: hero;
+  transition: opacity var(--t-base) var(--ease-out); }
+#morph.gone { opacity: 0; }
+#comments { position: fixed; pointer-events: none; }
+
+/* Centre feedback: in with a small spring, out with a quick fade. */
+#hud { position: absolute; left: 50%; top: 50%; z-index: 3; display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 20px;
+  border-radius: var(--r-cap); background: var(--glass-panel); color: var(--fg); border: 1px solid var(--glass-line); pointer-events: none;
+  font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; opacity: 0;
+  transform: translate(-50%, -50%) scale(calc(1 - .08 * var(--move)));
+  transition: opacity var(--t-quick) var(--ease-out), transform var(--t-quick) var(--ease-out); }
+#hud.show { opacity: 1; transform: translate(-50%, -50%);
+  transition: opacity var(--t-fast) var(--ease-in), transform var(--spring-snappy-t) var(--spring-snappy); }
+#hud.icon-only { width: 68px; height: 68px; padding: 0; justify-content: center; }
+#hud .hud-icon { display: grid; }
+#hud .hud-icon svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#hud .hud-icon svg .f { fill: currentColor; stroke: none; }
+#hud.icon-only .hud-icon svg { width: 28px; height: 28px; }
+
+#toast { position: absolute; top: 46%; left: 50%; transform: translate(-50%, -50%) scale(calc(1 - .04 * var(--move))); padding: 9px 18px; border-radius: var(--r-cap);
+  background: var(--glass-panel); color: var(--fg); border: 1px solid var(--glass-line); box-shadow: var(--shadow);
+  opacity: 0; transition: opacity var(--t-quick) var(--ease-out), transform var(--t-quick) var(--ease-out); pointer-events: none;
+  font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; }
+#toast.show { opacity: 1; transform: translate(-50%, -50%); transition: opacity var(--t-fast) var(--ease-in), transform var(--spring-snappy-t) var(--spring-snappy); }
+#error { position: absolute; left: 50%; top: 76px; transform: translateX(-50%); max-width: min(760px, 84%); padding: 10px 16px; border-radius: var(--r-md);
+  background: var(--error-bg); color: var(--error-fg); border: 1px solid rgba(255, 110, 110, .3);
+  white-space: pre-wrap; user-select: text; z-index: 3; box-shadow: var(--shadow); }
+
+/* ---- chrome: top clusters and the bottom bar ---- */
+.chrome { transition: opacity var(--t-base) var(--ease-in), transform var(--spring-smooth-t) var(--spring-smooth), visibility 0s linear 0s; }
+body.hide-ui .chrome { opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity var(--t-quick) var(--ease-out), transform var(--t-quick) var(--ease-out), visibility 0s linear var(--t-quick); }
+body.hide-ui { cursor: none; }
+body.ui-gone .chrome { display: none; }
+
+#topbar { position: fixed; top: 16px; left: 16px; right: 16px; display: flex; align-items: center; gap: 10px; z-index: 2; pointer-events: none; }
+#topbar > * { pointer-events: auto; }
+body.hide-ui #topbar { transform: translateY(calc(-8px * var(--move))); }
+.pill { display: flex; align-items: center; gap: 2px; height: 48px; padding: 0 6px; border-radius: var(--r-cap); }
+#title-pill { padding-right: 18px; min-width: 0; max-width: 60vw; }
+#heading { display: flex; align-items: baseline; gap: 10px; min-width: 0; margin-left: 4px; }
+#series { font-weight: 650; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: .01em; }
+#episode { color: var(--muted); white-space: nowrap; font-size: 13px; }
+.divider { width: 1px; height: 20px; background: var(--line); margin: 0 6px; }
+
+/* The bottom bar, and the episode layer it grows into (episodes.ts). Its
+   box is always as tall as the open layer; the part above the controls is
+   empty and lets presses through while closed. The glass is one surface,
+   moved up (transform) inside the bar's rounded clip, whose lower corners
+   are its own; the tab rides on its top edge.
+   The clip exists only while the layer moves or is open (.moving): over
+   playing video a rounded clip is recomposited every frame (+3 % of a core
+   with the controls shown, -bench); at rest the glass just sits at its
+   closed place, the same picture without it. */
+#bar { position: fixed; left: 16px; right: 16px; bottom: 16px; z-index: 2; pointer-events: none; --eps-h: 204px; --tab-h: 36px; padding-top: var(--tab-h); }
+#bar-body { position: relative; border-radius: var(--r-lg); padding-top: var(--eps-h); }
+#bar-glass { position: absolute; left: 0; right: 0; bottom: 0; top: var(--eps-h); border-radius: var(--r-lg); }
+#bar-body.moving { overflow: hidden; }
+#bar-body.moving #bar-glass { top: 0; will-change: transform; }
+#bar-body.moving #bar-glass, #eps-tab { transform: translateY(var(--eps-h)); transition: transform var(--t-base) var(--ease-move); }
+body.eps-open #bar-body.moving #bar-glass, body.eps-open #eps-tab { transform: none; transition: transform var(--spring-smooth-t) var(--spring-smooth); }
+#bar-body.snap #bar-glass { transition: none; }
+#controls { position: relative; padding: 4px 12px 8px; pointer-events: auto; }
+body.hide-ui #bar { transform: translateY(calc(10px * var(--move))); }
+
+/* Seek bar. The played part and the playhead move by transform (--p, 0-1),
+   the hover growth is a scale: nothing here re-lays out or repaints big areas. */
+#seekwrap { position: relative; height: 28px; margin: 0 4px; --p: 0; }
+#density { position: absolute; inset: 0 0 8px; width: 100%; height: calc(100% - 8px); pointer-events: none; }
+#track { position: absolute; left: 0; right: 0; bottom: 3px; height: 4px; border-radius: var(--r-xs); background: var(--track); overflow: hidden;
+  transition: transform var(--spring-snappy-t) var(--spring-snappy); }
+#fill { display: block; height: 100%; background: var(--grad); transform-origin: left; transform: scaleX(var(--p)); }
+#playhead { position: absolute; left: 0; right: 0; bottom: 5px; height: 0; pointer-events: none; transform: translateX(calc(var(--p) * 100%)); }
+#playhead i { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; border-radius: 50%; background: #fff;
+  box-shadow: 0 0 0 3px var(--accent), var(--glow); transform: scale(0); transition: transform var(--spring-snappy-t) var(--spring-snappy); }
+#seekwrap:hover #track { transform: scaleY(1.6); }
+#seekwrap:hover #playhead i, #seekwrap:active #playhead i { transform: scale(1); }
+/* The native slider stays for input and keyboard, invisible. */
+#seek { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; opacity: 0; }
+#seek::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 28px; }
+#seektip { position: fixed; transform: translateX(-50%); padding: 3px 9px; border-radius: var(--r-cap); color: var(--fg);
+  font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; pointer-events: none; z-index: 3; box-shadow: 0 6px 20px rgba(0, 0, 0, .3); }
+
+#buttons { display: flex; align-items: center; gap: 4px; height: 44px; }
+#time { margin-left: 6px; font-variant-numeric: tabular-nums; font-weight: 500; letter-spacing: .01em; white-space: nowrap; }
+#time i { font-style: normal; color: var(--faint); margin: 0 2px; }
+#live-info { margin-top: 6px; font-variant-numeric: tabular-nums; }
+#live-info b { color: var(--fg); font-weight: 600; }
+#live-info .sep { display: inline-block; width: 3px; height: 3px; border-radius: 50%; background: var(--faint); margin: 0 8px; vertical-align: middle; font-size: 0; }
+#volume-group { display: flex; align-items: center; gap: 4px; margin-right: 6px; }
+#volume { width: 76px; opacity: .75; transition: opacity var(--t-fast) linear; }
+#volume-group:hover #volume, #volume:focus-visible { opacity: 1; }
+#rate { height: 30px; padding: 0 10px; border-radius: var(--r-cap); background: var(--field); border: 1px solid var(--line); cursor: pointer; font-variant-numeric: tabular-nums;
+  transition: background-color var(--t-fast) linear; }
+#rate:hover { background: var(--field-hover); }
+#rate option { background: var(--glass-panel); color: var(--fg); }
+
+/* Range inputs with a filled part (--v, set from script). */
+input[type=range].fill { -webkit-appearance: none; appearance: none; height: 18px; background: transparent; cursor: pointer; --v: 50%; }
+input[type=range].fill::-webkit-slider-runnable-track { height: 4px; border-radius: var(--r-xs);
+  background: var(--grad) 0 0 / var(--v) 100% no-repeat, var(--track); }
+input[type=range].fill::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, .35), 0 0 0 1px rgba(0, 0, 0, .06); transition: transform var(--spring-snappy-t) var(--spring-snappy); }
+input[type=range].fill:hover::-webkit-slider-thumb { transform: scale(1.15); }
+input[type=range].fill:active::-webkit-slider-thumb { transform: scale(1.25); }
+
+/* A toggle that is on (settings while quick settings are open). */
+.icon[aria-expanded=true] { background: var(--field-hover); color: var(--accent); }
+
+/* ---- layers (layer.ts): closed, they are transparent and a little off
+   position; open, in place. Entering is a spring, leaving a quick ease;
+   an interrupted transition reverses from where it is. ---- */
+.layer { --layer-exit: 170ms; opacity: 0; pointer-events: none;
+  transition: opacity var(--t-quick) var(--ease-out), transform var(--t-quick) var(--ease-out); }
+.layer.open { opacity: 1; transform: none; pointer-events: auto;
+  transition: opacity var(--t-fast) var(--ease-in), transform var(--spring-smooth-t) var(--spring-smooth); }
+
+/* Cards over busy comments and the picture: nearly opaque (text-heavy
+   panels are regular glass, and without a blur over video that means
+   opaque), so text behind does not show through; the shortcut sheet also dims the picture (HIG: 35 %). */
+#quick, #panel, #help { background: var(--glass-panel); }
+#help { box-shadow: var(--shadow), 0 0 0 100vmax rgba(0, 0, 0, .35); }
+/* The closed positions below are id rules, which outrank .layer.open. */
+#quick.open, #panel.open { transform: none; }
+
+/* Quick card: grows out of the settings button (bottom right). */
+#quick { position: fixed; right: 16px; bottom: 112px; width: 348px; padding: 12px 16px 8px; border-radius: var(--r-lg); z-index: 5;
+  transform-origin: calc(100% - 76px) calc(100% + 30px); transform: translateY(calc(10px * var(--move))) scale(calc(1 - .06 * var(--move)));
+  --lbl-w: 88px; }
+#quick:lang(ja) { --lbl-w: 124px; }
+.quick-foot { display: flex; gap: 2px; align-items: center; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+
+/* Full settings: a sheet from the right. */
+#panel { position: fixed; top: 12px; right: 12px; bottom: 12px; width: min(420px, calc(100vw - 24px)); border-radius: var(--r-lg);
+  overflow-y: auto; padding: 0 18px 22px; user-select: text; z-index: 6; scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+  transform: translateX(calc(28px * var(--move))); --layer-exit: 170ms; }
+#panel header, #help header { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; padding: 14px 0 10px;
+  background: linear-gradient(var(--glass-panel) 70%, transparent); z-index: 1; }
+#panel header strong, #help header strong { font-size: 16px; font-weight: 700; letter-spacing: .01em; }
+#panel section { margin-top: 6px; padding: 4px 14px 10px; border-radius: var(--r-md); background: var(--field); }
+#panel section + section, #panel-body section { margin-top: 10px; }
+#panel h3 { margin: 10px 0 6px; font-size: 11.5px; font-weight: 650; color: var(--accent); letter-spacing: .08em; text-transform: uppercase; }
+
+/* Shortcuts: a centred card. */
+#help { position: fixed; left: 50%; top: 50%; width: min(560px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow-y: auto;
+  padding: 0 22px 20px; border-radius: var(--r-lg); z-index: 7;
+  transform: translate(-50%, -50%) scale(calc(1 - .04 * var(--move))); }
+#help.open { transform: translate(-50%, -50%); }
+#help-list { display: grid; grid-template-columns: auto 1fr; gap: 9px 18px; margin: 4px 0 0; align-items: center; }
+#help-list dt { display: flex; gap: 4px; justify-content: flex-end; }
+#help-list dd { margin: 0; color: var(--muted); }
+/* Panels carry no close button (docs/design-language.md §四): popovers and
+   layers close from their trigger, Esc or a press outside; only a centred
+   dialog ends with a button. */
+.dialog-foot { display: flex; justify-content: flex-end; margin-top: 16px; }
+.dialog-foot button { height: 34px; padding: 0 22px; border-radius: var(--r-cap); }
+
+.field { margin: 2px 0; }
+.row { display: flex; align-items: center; gap: 10px; min-height: 36px; }
+.row.wide { flex-wrap: wrap; padding: 4px 0; }
+.row.wide > .lbl { width: 100%; }
+.lbl { width: var(--lbl-w); flex: none; color: var(--fg); }
+#panel { --lbl-w: 112px; }
+#panel:lang(ja) { --lbl-w: 150px; }
+.lbl.has-hint { cursor: help; text-decoration: underline dotted color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 4px; }
+.row input[type=range] { flex: 1; min-width: 0; }
+.val { min-width: 56px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+.row select, .row input[type=number], .row input[type=datetime-local], textarea {
+  background: var(--field); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 5px 10px;
+  transition: border-color var(--t-fast) linear, background-color var(--t-fast) linear; }
+.row select, .row input[type=datetime-local] { flex: 1; min-width: 0; height: 32px; }
+.row select:hover, textarea:hover { background: var(--field-hover); }
+.row select:focus, textarea:focus, .row input:focus { border-color: var(--accent); outline: none; }
+select option { background: var(--glass-panel); }
+textarea { width: 100%; resize: vertical; }
+.row button, .stepper button { height: 30px; background: var(--field); border: 1px solid var(--line); border-radius: var(--r-sm); }
+.row button:hover { background: var(--field-hover); }
+.stepper { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; justify-content: flex-end; }
+.stepper button { padding: 0 8px; flex: none; }
+.stepper input[type=number] { width: 0; flex: 1; min-width: 44px; max-width: 80px; height: 30px; text-align: right; }
+#sync .val { min-width: 0; }
+.row input[type=color] { width: 44px; height: 28px; padding: 2px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--field); cursor: pointer; }
+
+/* Switches for single on/off settings: the knob moves by transform. */
+.row > input[type=checkbox] { -webkit-appearance: none; appearance: none; position: relative; width: 40px; height: 24px; margin: 0 0 0 auto; flex: none;
+  border-radius: var(--r-cap); background: var(--track); cursor: pointer; transition: background-color var(--t-fast) linear; }
+.row > input[type=checkbox]::before { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .35); transition: transform var(--spring-snappy-t) var(--spring-snappy); }
+.row > input[type=checkbox]:checked { background: var(--accent); }
+.row > input[type=checkbox]:checked::before { transform: translateX(16px); }
+.row > input[type=checkbox]:active::before { transform: scale(calc(1 + .1 * var(--move))); }
+.row > input[type=checkbox]:checked:active::before { transform: translateX(16px) scale(calc(1 + .1 * var(--move))); }
+
+/* Chips for groups of options. */
+.checks { display: flex; flex-wrap: wrap; gap: 6px; }
+.checks label { display: inline-flex; align-items: center; height: 30px; padding: 0 13px; border-radius: var(--r-cap); border: 1px solid var(--line);
+  background: transparent; color: var(--muted); cursor: pointer;
+  transition: background-color var(--t-fast) linear, border-color var(--t-fast) linear, color var(--t-fast) linear, transform var(--spring-snappy-t) var(--spring-snappy); }
+.checks label:hover { background: var(--field-hover); }
+.checks label:active { transform: scale(calc(1 - .05 * var(--move))); transition-duration: 60ms; }
+.checks label:has(input:checked) { color: var(--fg); border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.checks input { position: absolute; opacity: 0; pointer-events: none; }
+
+.hint { margin: 0 0 4px calc(var(--lbl-w) + 10px); color: var(--muted); font-size: 11.5px; }
+.row.buttons { flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+.hint.path { margin-left: calc(var(--lbl-w) + 10px); word-break: break-all; user-select: text; color: var(--faint); }
+.stats { margin: 8px 0 4px; padding: 10px 12px; border-radius: var(--r-md); background: var(--field); color: var(--muted); font-size: 12px; line-height: 1.6; }
+.err { color: var(--err); }
+#info-list { display: grid; grid-template-columns: 96px 1fr; gap: 5px 12px; margin: 4px 0 6px; font-size: 12px; }
+#info-list dt { color: var(--muted); }
+#info-list dd { margin: 0; word-break: break-all; }
+
+/* The tab: a capsule standing on the glass's top edge. */
+#eps-tab { position: absolute; top: 0; right: 28px; height: 30px; display: flex; align-items: center; gap: 2px; padding: 0 10px 0 14px;
+  border-radius: var(--r-cap); pointer-events: auto; color: var(--muted); font-size: 12.5px; font-weight: 600; }
+#eps-tab:hover, #eps-tab[aria-expanded=true] { color: var(--fg); background: var(--glass); }
+#eps-tab svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  transition: transform var(--spring-snappy-t) var(--spring-snappy); }
+#eps-tab[aria-expanded=true] svg { transform: rotate(180deg); }
+#eps-tab[hidden] { display: none; }
+
+/* The layer's content: a heading and one row of episodes, the ends of the
+   row fading out. */
+#eps { --layer-exit: 240ms; position: absolute; left: 0; right: 0; top: 0; height: var(--eps-h); display: flex; flex-direction: column; padding-top: 14px;
+  transform: translateY(calc(18px * var(--move))); }
+#eps.open, #eps.warm { transform: none; }
+#eps header { display: flex; align-items: baseline; gap: 10px; padding: 0 22px 8px; min-width: 0; }
+#eps-title { font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#eps-sub { flex: none; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+#eps-list { list-style: none; margin: 0; padding: 4px 22px 8px; display: flex; gap: 12px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+  overscroll-behavior: contain; mask-image: linear-gradient(90deg, transparent, #000 22px, #000 calc(100% - 22px), transparent); }
+.ep-card { flex: none; width: 168px; display: flex; flex-direction: column; gap: 2px; padding: 0; border-radius: var(--r-md); text-align: left; color: inherit; }
+.ep-card:hover { background: transparent; }
+.ep-card:active { transform: scale(calc(1 - .03 * var(--move))); }
+.ep-card:focus-visible { outline: none; }
+.ep-thumb { position: relative; aspect-ratio: 16 / 9; margin-bottom: 5px; border-radius: var(--r-md); overflow: hidden; background: var(--field);
+  transition: transform var(--spring-snappy-t) var(--spring-snappy), box-shadow var(--t-fast) linear; }
+.ep-card:hover .ep-thumb { transform: translateY(calc(-2px * var(--move))); }
+.ep-card:focus-visible .ep-thumb { box-shadow: 0 0 0 2px var(--fg); }
+.ep-card[aria-current] .ep-thumb { box-shadow: 0 0 0 2px var(--accent), var(--glow); }
+.ep-thumb img { width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity var(--t-base) var(--ease-in); }
+.ep-thumb img.loaded { opacity: 1; }
+.ep-progress { position: absolute; left: 6px; right: 6px; bottom: 5px; height: 3px; border-radius: var(--r-xs); background: rgba(255, 255, 255, .35); overflow: hidden; }
+.ep-progress::after { content: ""; position: absolute; inset: 0; transform-origin: left; transform: scaleX(var(--p)); background: var(--grad); }
+.ep-watched { position: absolute; right: 6px; top: 6px; width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; color: #fff; background: rgba(0, 0, 0, .55); }
+.ep-now { position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: center; gap: 3px; padding-bottom: 36%;
+  background: rgba(0, 0, 0, .35); }
+.ep-now i { width: 3px; height: 14px; border-radius: var(--r-xs); background: #fff; transform-origin: bottom; animation: eq 900ms ease-in-out infinite alternate; }
+.ep-now i:nth-child(2) { animation-delay: -300ms; }
+.ep-now i:nth-child(3) { animation-delay: -600ms; }
+@keyframes eq { from { transform: scaleY(.3); } to { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) { .ep-now i { animation: none; transform: scaleY(.7); } }
+.ep-name { padding: 0 2px; font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ep-meta { padding: 0 2px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ep-card[aria-current] .ep-meta, .ep-card.counting .ep-meta { color: var(--accent); }
+/* Up next: the next episode, ringed, fills a bar over the countdown. */
+.ep-count { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--grad); transform-origin: left; transform: scaleX(0); opacity: 0; }
+.ep-card.counting .ep-thumb { box-shadow: 0 0 0 2px var(--accent), var(--glow); }
+.ep-card.counting .ep-count { opacity: 1; transform: scaleX(1); transition: transform var(--count, 5s) linear; }
+
+/* Night: dimming under the bars (HIG: about 35 % under controls over
+   bright media), instead of blurring the video: gradients that come and go
+   with the controls (they are .chrome, and gone with them when hidden). */
+.scrim { position: fixed; left: 0; right: 0; pointer-events: none; z-index: 1; }
+#scrim-top { top: 0; height: 120px; background: linear-gradient(rgba(0, 0, 0, .3), transparent); }
+#scrim-bottom { bottom: 0; height: 200px; background: linear-gradient(transparent, rgba(0, 0, 0, .38)); }
+:root[data-theme=light] .scrim { display: none; }
+#appearance .row { justify-content: space-between; }

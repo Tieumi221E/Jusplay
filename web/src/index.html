@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'">
+<title>Jusplay</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+<script src="prefs.js"></script>
+</head>
+<body>
+<div id="stage">
+  <video id="video" playsinline></video>
+  <img id="morph" alt="" hidden>
+  <canvas id="comments" width="1920" height="1080"></canvas>
+  <div id="hud" aria-live="polite"><span class="hud-icon"></span><span class="hud-text"></span></div>
+  <div id="toast"></div>
+  <div id="error" hidden></div>
+</div>
+<div id="scrim-top" class="scrim chrome"></div>
+<div id="scrim-bottom" class="scrim chrome"></div>
+<div id="topbar" class="chrome">
+  <div class="pill glass" id="title-pill">
+    <button id="back" class="icon round" data-icon="back" data-tip data-key="Alt ←" data-tip-at="below"></button>
+    <div id="heading"><span id="series"></span><span id="episode"></span></div>
+  </div>
+</div>
+<div id="bar" class="chrome">
+  <button id="eps-tab" class="glass" aria-controls="eps" aria-expanded="false" hidden><span></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 12 4-4 4 4"/></svg></button>
+  <div id="bar-body">
+  <div id="bar-glass" class="glass"></div>
+  <section id="eps" class="layer" aria-labelledby="eps-title" hidden>
+    <header><strong id="eps-title"></strong><span id="eps-sub"></span></header>
+    <ol id="eps-list"></ol>
+  </section>
+  <div id="controls">
+  <div id="seekwrap">
+    <canvas id="density"></canvas>
+    <div id="track"><i id="fill"></i></div>
+    <div id="playhead"><i></i></div>
+    <input id="seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="进度">
+  </div>
+  <div id="seektip" class="glass" hidden></div>
+  <div id="buttons">
+    <button id="play" class="icon big" data-icon="play" data-tip data-key="Space"></button>
+    <span id="time"></span>
+    <span class="grow"></span>
+    <div id="volume-group">
+      <button id="mute" class="icon" data-icon="volume" data-tip data-key="M"></button>
+      <input id="volume" class="fill" type="range" min="0" max="1" step="0.02" aria-label="音量">
+    </div>
+    <select id="rate" data-tip data-key="[ ]">
+      <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option>
+      <option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option>
+    </select>
+    <button id="toggle-comments" class="icon" data-icon="comments" data-tip data-key="C"></button>
+    <button id="open-quick" class="icon" data-icon="settings" data-tip data-key="S" aria-haspopup="dialog" aria-expanded="false"></button>
+    <button id="fullscreen" class="icon" data-icon="fullscreen" data-tip data-key="F"></button>
+  </div>
+  </div>
+  </div>
+</div>
+<div id="quick" class="glass layer" role="dialog" hidden>
+  <div id="quick-body"></div>
+  <div class="quick-foot">
+    <button id="open-help" class="link"></button>
+    <span class="grow"></span>
+    <button id="theme-switch" class="icon"></button>
+    <button id="open-settings" class="link more"></button>
+  </div>
+</div>
+<aside id="panel" class="glass layer" role="dialog" hidden>
+  <header><strong>设置</strong></header>
+  <section id="appearance">
+    <h3>外观</h3>
+    <div class="row"><label class="lbl" id="lbl-lang">界面语言</label><button id="lang-switch" class="lang"></button></div>
+  </section>
+  <section id="source">
+    <h3>弹幕</h3>
+    <div class="row"><label class="lbl">来源</label><span id="source-name"></span></div>
+    <div class="hint path" id="source-path"></div>
+    <div class="row buttons">
+      <button id="pick-comments">选择弹幕文件…</button>
+      <button id="pick-snapshot">快照文件夹…</button>
+      <button id="auto-comments" hidden>恢复自动</button>
+    </div>
+  </section>
+  <section id="sync">
+    <h3>同步</h3>
+    <div class="row"><label class="lbl">评论偏移</label>
+      <div class="stepper"><button data-offset="-100">−100</button><input id="offset" type="number" step="10"><span class="val">ms</span><button data-offset="100">+100</button></div></div>
+    <div class="hint" id="sync-hint"></div>
+  </section>
+  <div id="panel-body"></div>
+  <section id="info"><h3>信息</h3><dl id="info-list"></dl>
+    <div class="hint" id="live-info"></div>
+    <div class="row buttons"><button id="copy-log">复制诊断日志</button></div>
+    <div class="hint" id="log-hint"></div></section>
+</aside>
+<div id="help" class="glass layer" role="dialog" hidden>
+  <header><strong id="help-title"></strong></header>
+  <dl id="help-list"></dl>
+  <div class="dialog-foot"><button id="help-done" class="primary"></button></div>
+</div>
+<script type="module" src="app.js" blocking="render"></script>
+</body>
+</html>

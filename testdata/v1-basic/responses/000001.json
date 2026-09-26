@@ -1,0 +1,17 @@
+{"meta":{"status":200},"data":{"globalComments":[{"currentCount":12,"overallCount":12}],"threads":[
+{"id":"1000","fork":"owner","commentCount":2,"comments":[
+ {"id":"o-1","no":1,"vposMs":0,"body":"@デフォルト","commands":["red"],"userId":"","isPremium":false,"score":0,"postedAt":"2026-01-01T00:00:00+09:00","nicoruCount":0,"nicoruId":null,"source":"trunk","isMyPost":false},
+ {"id":"o-2","no":2,"vposMs":1000,"body":"投稿者コメント","commands":["ue","big"],"userId":"","isPremium":false,"score":0,"postedAt":"2026-01-01T00:00:01+09:00","nicoruCount":0,"nicoruId":null,"source":"trunk","isMyPost":false}]},
+{"id":"1001","fork":"main","commentCount":12,"comments":[
+ {"id":"m-1","no":1,"vposMs":1234,"body":"普通","commands":["ue","red","big"],"userId":"u1","isPremium":true,"score":0,"postedAt":"2026-01-02T10:00:00+09:00","nicoruCount":3,"nicoruId":"n1","source":"trunk","isMyPost":false},
+ {"id":"m-2","no":2,"vposMs":5000,"body":"■■■\n■　■\n■■■","commands":["ca","shita","small"],"userId":"u2","isPremium":false,"score":0,"postedAt":"2026-01-02T10:00:01+09:00","nicoruCount":0,"nicoruId":null,"source":"trunk","isMyPost":false},
+ {"id":"m-3","no":3,"vposMs":5000,"body":"□□□\n□　□","commands":["ca","shita","small"],"userId":"u2","isPremium":false,"score":-1000,"postedAt":"2026-01-02T10:00:02+09:00","nicoruCount":0,"nicoruId":null,"source":"trunk","isMyPost":false,"futureField":{"x":1.50}},
+ {"id":"m-4","no":4,"vposMs":7000,"body":"<img src=x onerror=alert(1)> &amp; \u0000 😀","commands":["nico:flash","#ff00ff","unknowncmd"],"userId":"u3","isPremium":false,"score":0,"postedAt":"2026-01-02T10:00:03+09:00","nicoruCount":0,"nicoruId":null,"source":"leaf","isMyPost":false},
+ {"id":"m-5","no":"5","vposMs":8000,"body":"no is a string","commands":[],"userId":"u4","isPremium":false,"score":0,"postedAt":"2026-01-02T10:00:04+09:00","nicoruCount":0,"nicoruId":null,"source":"trunk","isMyPost":false},
+ {"id":"m-6","no":6,"vposMs":9000,"body":"isMyPost missing","commands":[],"userId":"u4","isPremium":false,"score":0,"postedAt":"2026-01-02T10:00:05+09:00","nicoruCount":0,"nicoruId":null,"source":"trunk"},
+ {"id":"m-7","no":7,"vposMs":10000,"body":"unsafe integer","commands":[],"userId":"u4","isPremium":false,"score":0,"postedAt":"2026-01-02T10:00:06+09:00","nicoruCount":9007199254740993,"nicoruId":null,"source":"trunk","isMyPost":false},
+ {"id":"","no":8,"vposMs":11000,"body":"no id","commands":[],"userId":"u5","isPremium":false,"score":0,"postedAt":"2026-01-02T10:00:07+09:00","nicoruCount":0,"nicoruId":null,"source":"trunk","isMyPost":false},
+ {"id":"m-9","no":9,"vposMs":-500,"body":"negative vpos","commands":[],"userId":"u5","isPremium":false,"score":0,"postedAt":"not a date","nicoruCount":0,"nicoruId":null,"source":"trunk","isMyPost":false}]},
+{"id":"1001","fork":"easy","commentCount":1,"comments":[
+ {"id":"m-1","no":1,"vposMs":2000,"body":"かんたん","commands":[],"userId":"u6","isPremium":false,"score":0,"postedAt":"2026-01-02T11:00:00+09:00","nicoruCount":0,"nicoruId":null,"source":"trunk","isMyPost":false}]}
+]}}

@@ -1,0 +1,279 @@
+/* The library's own colours; the glass is shared (tokens.css). Its
+   popovers sit over still content, so they alone keep a backdrop blur and
+   can be more transparent. */
+:root {
+  --bg: #0b1128;
+  --surface: rgba(140, 170, 255, .045);
+  --glass: rgba(var(--glass-rgb), .76);
+  --ambient: radial-gradient(900px 520px at 6% -10%, rgba(54, 187, 253, .15), transparent 70%),
+    radial-gradient(860px 500px at 98% -14%, rgba(156, 143, 252, .15), transparent 70%),
+    radial-gradient(1200px 600px at 50% 120%, rgba(63, 123, 246, .08), transparent 70%);
+  --thumb-bg: linear-gradient(135deg, #15204a, #0e1633);
+  --scroll: rgba(140, 170, 255, .2);
+  --chip-on: #a9ccff;
+  --chip-pending: #f2cf8a;
+  --chip-bad: #ffb3b3;
+  --backdrop-opacity: .5;
+}
+:root[data-theme=light] {
+  --bg: #eef5fc;
+  --surface: rgba(255, 255, 255, .62);
+  --ambient: radial-gradient(900px 520px at 6% -10%, rgba(95, 205, 253, .24), transparent 70%),
+    radial-gradient(860px 500px at 98% -14%, rgba(178, 149, 252, .2), transparent 70%),
+    radial-gradient(1200px 600px at 50% 120%, rgba(120, 170, 250, .12), transparent 70%);
+  --thumb-bg: linear-gradient(135deg, #ddebfa, #e6ddfb);
+  --scroll: rgba(60, 90, 160, .25);
+  --chip-on: #2a63d6;
+  --chip-pending: #9a6212;
+  --chip-bad: #c0392b;
+  --backdrop-opacity: .4;
+}
+
+* { box-sizing: border-box; }
+/* The scrollbar's room is always kept: a page that scrolls (a series) and one
+   that does not (a short home) have the same width, so the header does not shift. */
+html { scrollbar-color: var(--scroll) transparent; scrollbar-gutter: stable; }
+body { margin: 0; min-height: 100vh; background: var(--ambient), var(--bg); background-attachment: fixed; color: var(--fg);
+  font: 13px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+button { font: inherit; color: inherit; background: var(--field); border: 1px solid var(--line); border-radius: var(--r-cap);
+  padding: 7px 14px; cursor: pointer;
+  transition: background-color var(--t-fast) linear, border-color var(--t-fast) linear, transform var(--spring-snappy-t) var(--spring-snappy); }
+button:hover { background: var(--field-hover); }
+button:active { transform: scale(calc(1 - .04 * var(--move))); transition-duration: 60ms; }
+button:focus-visible, a:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--grad); border-color: transparent; color: #fff; font-weight: 600; box-shadow: var(--glow); }
+button.primary:hover { filter: brightness(1.08); }
+button.icon { width: 36px; height: 36px; padding: 0; display: grid; place-items: center; background: transparent; border-color: transparent; border-radius: var(--r-cap); }
+button.icon:hover { background: var(--field); }
+button.icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+button.wide { width: 100%; border-radius: var(--r-md); }
+.grow { flex: 1; }
+.glass { background: var(--glass); backdrop-filter: blur(22px) saturate(1.5); border: 1px solid var(--line); box-shadow: var(--shadow), inset 0 1px 0 var(--glass-hi); }
+
+/* Header */
+/* Header: floating capsule groups, as over the player (docs/design-language.md
+   §十), over a background that fades into the page instead of ending on a
+   line. The capsules are glass without a blur: the page scrolls under them. */
+#top { position: sticky; top: 0; z-index: 5; height: 80px; display: flex; align-items: center; gap: 12px; padding: 0 16px; /* 16 from the window, as over the player */
+  background: linear-gradient(var(--bg) 30%, color-mix(in srgb, var(--bg) 70%, transparent)); }
+.pill { display: flex; align-items: center; gap: 2px; height: 48px; padding: 0 6px; border-radius: var(--r-cap);
+  background: var(--glass-bar); border: 1px solid var(--glass-line); box-shadow: inset 0 1px 0 var(--glass-hi); }
+#brand.pill { padding: 0 18px 0 8px; }
+/* The top-left place: the mark at home; on a series page the way back, the
+   same capsule as over the player (‹ and where you are), in the same spot,
+   so the button just pressed there is pressed again to go on back. The two
+   share one slot of fixed width and cross-fade (opacity and transform
+   only): nothing beside them moves. */
+#home-slot { position: relative; flex: none; width: 236px; height: 48px; }
+#home-slot > .pill { position: absolute; left: 0; top: 0; max-width: 100%;
+  transition: opacity var(--t-quick) var(--ease-out), transform var(--t-quick) var(--ease-out); }
+#crumb { padding: 0 18px 0 6px; gap: 6px; opacity: 0; transform: translateX(calc(10px * var(--move))); pointer-events: none; }
+#crumb-title { font-weight: 650; font-size: 14.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: .01em; }
+#up svg { width: 19px; height: 19px; stroke-width: 1.8; }
+#top.sub #brand { opacity: 0; transform: translateX(calc(-10px * var(--move))); pointer-events: none; }
+#top.sub #crumb { opacity: 1; transform: none; pointer-events: auto;
+  transition: opacity var(--t-base) var(--ease-in), transform var(--spring-snappy-t) var(--spring-snappy); }
+#top:not(.sub) #brand { transition: opacity var(--t-base) var(--ease-in), transform var(--spring-snappy-t) var(--spring-snappy); }
+#actions { gap: 4px; }
+#scan-status:not(:empty) { padding: 0 6px 0 10px; }
+/* Scroll edge: the header's lower edge fades into the content under it.
+   No backdrop blur here: under a header that folds while the page scrolls
+   it cost frames (-selftest -scroll, 120 Hz: 3-7 late frames a run and
+   long frames, against 1-4 without), for a surface that scrolling content
+   passes under all the time. */
+#top::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 24px; pointer-events: none;
+  background: linear-gradient(color-mix(in srgb, var(--bg) 70%, transparent), transparent); }
+/* Folded (scrolling down): only the mark and a round search button. The
+   rest fades and steps aside (opacity and transform only); the search box
+   narrows (a width change, but of one small box in the header). */
+#top > * { transition: opacity var(--t-quick) var(--ease-move), transform var(--spring-snappy-t) var(--spring-snappy); }
+#top.compact #actions {
+  opacity: 0; transform: translateY(calc(-6px * var(--move))); pointer-events: none; }
+#search-box { transition: width var(--spring-snappy-t) var(--spring-snappy); }
+#top.compact #search-box { width: 48px; }
+#top.compact #search { padding-right: 0; cursor: pointer; }
+#top.compact #search::placeholder, #top.compact #search-box kbd { opacity: 0; }
+#brand { cursor: pointer; display: flex; align-items: center; gap: 10px; font-size: 16.5px; font-weight: 700; letter-spacing: .01em; text-decoration: none; }
+#brand .mark { width: 32px; height: 32px; filter: drop-shadow(0 2px 10px rgba(110, 164, 255, .35)); }
+#search-box { position: relative; display: flex; align-items: center; width: min(440px, 40vw); }
+#search-box svg { position: absolute; left: 17px; width: 15px; height: 15px; fill: none; stroke: var(--faint); stroke-width: 1.7; stroke-linecap: round; }
+#search { width: 100%; height: 48px; padding: 0 40px 0 42px; border-radius: var(--r-cap); border: 1px solid var(--glass-line); background: var(--glass-bar);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+  color: var(--fg); font: inherit; transition: border-color var(--t-fast) linear, background-color var(--t-fast) linear; }
+#search:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); outline: none; box-shadow: var(--glow); }
+#search::-webkit-search-cancel-button { display: none; }
+#search-box kbd { position: absolute; right: 16px; padding: 0 7px; border: 1px solid var(--line); border-radius: var(--r-sm); color: var(--faint); font: 11px/18px var(--font); }
+#search:focus + kbd, #search:not(:placeholder-shown) + kbd { display: none; }
+#scan-status { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+#rescan.spinning svg { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+button.lang { height: 30px; padding: 0 12px; font-size: 12px; background: transparent; color: var(--muted); }
+button.lang:hover { color: var(--fg); background: var(--field); }
+
+.popover-host { position: relative; }
+.popover { position: absolute; right: -6px; top: 54px; width: 380px; padding: 12px; border-radius: var(--r-md); background: var(--glass);
+  backdrop-filter: blur(24px) saturate(1.5); border: 1px solid var(--line); box-shadow: var(--shadow), inset 0 1px 0 var(--glass-hi);
+  transform-origin: calc(100% - 18px) -8px; transform: translateY(calc(-6px * var(--move))) scale(calc(1 - .04 * var(--move))); }
+.pop-title { color: var(--muted); font-size: 11.5px; font-weight: 650; letter-spacing: .06em; margin: 2px 6px 8px; }
+#folder-list { list-style: none; margin: 0 0 10px; padding: 0; max-height: 320px; overflow: auto; }
+#folder-list li { display: flex; align-items: center; gap: 8px; padding: 8px 6px 8px 12px; border-radius: var(--r-sm); }
+#folder-list li:hover { background: var(--field); }
+#folder-list .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+#folder-list .count { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+#folder-list button { padding: 3px 10px; background: transparent; border-color: transparent; color: var(--faint); }
+#folder-list button:hover { color: var(--fg); background: var(--field-hover); }
+#folder-list .empty { color: var(--faint); padding: 8px 12px; }
+
+/* Layout */
+#view { padding: 28px 32px 72px; max-width: 1720px; margin: 0 auto; }
+h2 { margin: 30px 0 16px; font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 10px; letter-spacing: .01em; }
+h2::before { content: ""; width: 4px; height: 16px; border-radius: var(--r-xs); background: var(--grad); box-shadow: var(--glow); }
+h2 .sub { color: var(--faint); font-size: 12px; font-weight: 500; }
+h2:first-child { margin-top: 6px; }
+.toolbar { display: flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; font-weight: 400; }
+.seg { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-cap); background: var(--surface); }
+.seg button { border: 0; border-radius: var(--r-cap); background: transparent; padding: 4px 12px; color: var(--muted); }
+.seg button[aria-pressed=true] { background: var(--field-hover); color: var(--fg); box-shadow: inset 0 1px 0 var(--glass-hi); }
+
+/* Thumbnails */
+.thumb { position: relative; aspect-ratio: 16 / 9; border-radius: var(--r-md); overflow: hidden; background: var(--thumb-bg); isolation: isolate; }
+.thumb::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--line); pointer-events: none; }
+.thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity var(--t-base) var(--ease-in), transform var(--spring-smooth-t) var(--spring-smooth); }
+.thumb img.loaded { opacity: 1; }
+.thumb img.instant { transition: transform var(--spring-smooth-t) var(--spring-smooth); }
+.thumb .progress { position: absolute; left: 10px; right: 10px; bottom: 8px; height: 3px; border-radius: var(--r-xs); background: rgba(0, 0, 0, .45); overflow: hidden; }
+.thumb .progress i { display: block; height: 100%; background: var(--grad); }
+.thumb .play { position: absolute; inset: 0; display: grid; place-items: center; opacity: 0; transition: opacity var(--t-fast) linear;
+  background: linear-gradient(transparent 40%, rgba(0, 0, 0, .45)); }
+.thumb .play span { width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, .9);
+  color: #111; font-size: 15px; padding-left: 3px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); transform: scale(calc(1 - .1 * var(--move))); transition: transform var(--spring-snappy-t) var(--spring-snappy); }
+.watched-mark { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  background: rgba(0, 0, 0, .55); backdrop-filter: blur(6px); color: var(--ok); font-size: 12px; }
+
+/* Rails and grid */
+.rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(270px, 310px); gap: 18px; overflow-x: auto; padding: 2px 2px 10px; scroll-snap-type: x proximity; }
+.rail > * { scroll-snap-align: start; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 26px 20px; }
+.card { display: block; text-decoration: none; border-radius: var(--r-md); cursor: pointer; outline-offset: 4px; }
+/* Lift on hover. The shadow and glow are drawn once, on a layer under the
+   thumbnail, and only fade: animating box-shadow repaints every frame. */
+.card { position: relative; }
+.card::before { content: ""; position: absolute; left: 0; right: 0; top: 0; aspect-ratio: 16 / 9; border-radius: var(--r-md); pointer-events: none;
+  box-shadow: var(--shadow), 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent), var(--glow); opacity: 0;
+  transition: opacity var(--t-quick) var(--ease-out), transform var(--t-quick) var(--ease-out); }
+.card .thumb { transition: transform var(--spring-smooth-t) var(--spring-smooth); }
+.card:hover .thumb, .card:focus-visible .thumb, .card:hover::before, .card:focus-visible::before { transform: translateY(calc(-4px * var(--move))); }
+.card:hover::before, .card:focus-visible::before { opacity: 1; transition: opacity var(--t-base) var(--ease-in), transform var(--spring-smooth-t) var(--spring-smooth); }
+.card:active .thumb, .card:active::before { transform: translateY(calc(-2px * var(--move))) scale(calc(1 - .02 * var(--move))); transition-duration: 80ms; }
+.card:hover .thumb img { transform: scale(calc(1 + .04 * var(--move))); }
+.card:hover .play { opacity: 1; }
+.card:hover .play span { transform: scale(1); }
+.card .title { margin-top: 10px; font-weight: 600; font-size: 13.5px; line-height: 1.38; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card .meta { margin-top: 4px; color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.dot { width: 3px; height: 3px; border-radius: 50%; background: var(--faint); }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: var(--r-cap); font-size: 11px; line-height: 18px;
+  border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.chip.on { border-color: color-mix(in srgb, var(--accent) 40%, transparent); color: var(--chip-on); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.chip.pending { border-color: color-mix(in srgb, var(--warn) 45%, transparent); color: var(--chip-pending); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+.chip.bad { border-color: rgba(255, 107, 107, .4); color: var(--chip-bad); }
+
+/* Series page */
+.hero { position: relative; margin: -28px -32px 10px; padding: 56px 32px 34px; overflow: hidden; min-height: 280px; display: flex; align-items: flex-end; }
+.hero .backdrop { position: absolute; inset: -60px; background-size: cover; background-position: center; filter: blur(40px) saturate(1.3);
+  opacity: var(--backdrop-opacity); transform: scale(1.1); }
+.hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(transparent 10%, var(--bg)); }
+.hero-inner { position: relative; z-index: 1; display: flex; gap: 30px; align-items: flex-end; width: 100%; }
+.hero .cover { width: 320px; flex: none; }
+.hero .cover .thumb { box-shadow: var(--shadow); border-radius: var(--r-md); }
+.hero h1 { margin: 0 0 8px; font-size: 32px; font-weight: 750; line-height: 1.2; letter-spacing: -.005em; }
+.hero .facts { color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hero .actions { margin-top: 18px; display: flex; gap: 10px; }
+.hero .actions button { height: 42px; padding: 0 22px; font-size: 13.5px; }
+
+.episodes { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+.ep { display: grid; grid-template-columns: 156px 52px 1fr auto 36px; align-items: center; gap: 16px; padding: 8px 10px; border-radius: var(--r-md);
+  border: 1px solid transparent; cursor: pointer; transition: background-color var(--t-fast) linear, border-color var(--t-fast) linear;
+  content-visibility: auto; contain-intrinsic-size: auto 106px; }
+.ep:hover, .ep:focus-visible { background: var(--surface); border-color: var(--line); }
+.ep:hover .play { opacity: 1; }
+.ep:hover .play span { transform: scale(.8); }
+.ep .num { font-size: 21px; font-weight: 700; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+.ep:hover .num { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.ep.watched .num { color: var(--faint); }
+.ep .name { min-width: 0; }
+.ep .name .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ep .name .m { color: var(--faint); font-size: 12px; margin-top: 3px; display: flex; gap: 6px; align-items: center; }
+.ep .more { width: 32px; height: 32px; padding: 0; border-color: transparent; background: transparent; color: var(--faint); opacity: 0; font-size: 16px; }
+.ep:hover .more, .ep:focus-within .more, .ep .more[aria-expanded=true] { opacity: 1; }
+.ep .more:hover { color: var(--fg); background: var(--field-hover); }
+.ep.missing { opacity: .45; cursor: default; }
+.ep.missing:hover { background: transparent; border-color: transparent; }
+
+.menu { position: fixed; z-index: 10; min-width: 240px; padding: 6px; border-radius: var(--r-md); background: var(--glass);
+  backdrop-filter: blur(24px) saturate(1.5); border: 1px solid var(--line); box-shadow: var(--shadow), inset 0 1px 0 var(--glass-hi);
+  transform: scale(calc(1 - .05 * var(--move))); }
+.menu button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 8px 12px; border-radius: var(--r-sm); }
+.menu button:hover, .menu button:focus-visible { background: var(--field-hover); outline: none; }
+.menu button:disabled { color: var(--faint); cursor: default; background: transparent; }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 5px 6px; }
+
+.empty-state { max-width: 480px; margin: 14vh auto; text-align: center; }
+.empty-state .big { font-size: 26px; font-weight: 750; margin-bottom: 10px; }
+.empty-state p { color: var(--muted); margin: 0 0 26px; line-height: 1.7; }
+.empty-state button { height: 44px; padding: 0 26px; font-size: 14px; }
+.none { color: var(--faint); padding: 30px 0; }
+
+#toast { position: fixed; left: 50%; bottom: 30px; transform: translate(-50%, calc(16px * var(--move))) scale(calc(1 - .02 * var(--move))); padding: 11px 20px; border-radius: var(--r-cap);
+  background: var(--glass); backdrop-filter: blur(20px) saturate(1.5); border: 1px solid var(--line); box-shadow: var(--shadow);
+  opacity: 0; transition: opacity var(--t-quick) var(--ease-out), transform var(--t-quick) var(--ease-out); pointer-events: none; z-index: 20; max-width: 70vw; font-weight: 500; }
+#toast.show { opacity: 1; transform: translate(-50%, 0) scale(1); transition: opacity var(--t-fast) var(--ease-in), transform var(--spring-snappy-t) var(--spring-snappy); }
+
+@media (max-width: 760px) {
+  #top, #view { padding-left: 16px; padding-right: 16px; }
+  #search-box { margin-left: 4px; }
+  .hero { margin-left: -16px; margin-right: -16px; padding-left: 16px; padding-right: 16px; }
+  .hero .cover { display: none; }
+  .ep { grid-template-columns: 110px 40px 1fr 30px; }
+  .ep .chips { display: none; }
+}
+/* Layers (layer.ts): the menu and the folders popover. */
+.layer { --layer-exit: 150ms; opacity: 0; pointer-events: none; transition: opacity var(--t-quick) var(--ease-out), transform var(--t-quick) var(--ease-out); }
+.layer.open { opacity: 1; transform: none; pointer-events: auto; transition: opacity var(--t-fast) var(--ease-in), transform var(--spring-snappy-t) var(--spring-snappy); }
+/* Reduced motion (tokens.css zeroes --move): only the spinner stops. */
+@media (prefers-reduced-motion: reduce) { #rescan.spinning svg { animation-duration: 3s; } }
+
+/* Episode menu: the heading over the list of other versions. */
+.menu-label { padding: 4px 12px 2px; font-size: 11.5px; font-weight: 650; color: var(--muted); letter-spacing: .04em; }
+
+/* The header mark is the icon of the theme (assets/make_icon.py). */
+:root[data-theme=light] .mark.night, :root:not([data-theme=light]) .mark.day { display: none; }
+
+/* A folder whose records cannot be written (read-only): kept in memory only. */
+.folder-warn { flex-basis: 100%; margin-top: 2px; font-size: 11.5px; color: var(--warn); }
+
+/* The player, over the library (playerhost.ts). While it plays the library
+   is not drawn at all (content-visibility), so it costs nothing. */
+#player-frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 100; visibility: hidden; background: transparent; }
+body.playing #player-frame { visibility: visible; }
+body.playing #view, body.playing #top { content-visibility: hidden; }
+/* The zoom between a card and the picture: a thumbnail moved by transform
+   (FLIP), over a backdrop in the player's letterbox colour. */
+#zoom { position: fixed; z-index: 101; transform-origin: 0 0; border-radius: var(--r-md); overflow: hidden; pointer-events: none; }
+#zoom img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#zoom.moving { transition: transform var(--spring-smooth-t) var(--spring-smooth), opacity var(--t-page) var(--ease-out); }
+#zoom.fade { opacity: 0; }
+#zoom-bg { position: fixed; inset: 0; z-index: 99; background: #000; opacity: 0; pointer-events: none; transition: opacity var(--t-page) var(--ease-move); }
+:root[data-theme=light] #zoom-bg { background: #fff; }
+#zoom-bg.on { opacity: 1; }
+
+/* Home: the episode being watched, first and large (homeHero). */
+.hero.home { min-height: 340px; margin-bottom: 18px; }
+.hero.home .cover { width: 420px; cursor: pointer; border-radius: var(--r-md); }
+.hero.home .cover:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.hero .kicker { color: var(--accent); font-size: 12px; font-weight: 650; letter-spacing: .08em; margin-bottom: 6px; }
+.hero.home h1 { font-size: 34px; }
+/* Cards: a light sweep across the picture on hover, as a glass edge catching it. */
+.card .thumb::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: linear-gradient(125deg, rgba(255, 255, 255, .22), transparent 42%); transition: opacity var(--t-base) var(--ease-move); }
+.card:hover .thumb::after, .card:focus-visible .thumb::after { opacity: 1; }

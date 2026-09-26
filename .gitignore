@@ -1,0 +1,38 @@
+# Personal media and comment archives
+*.mkv
+*.mp4
+*.webm
+*.xml
+*.raw.zip
+*.playback.json
+*.manifest.json
+*.sqlite3
+*.db
+*.log
+*.har
+*.cookie
+*.cookies
+.env
+.env.*
+data/
+captures/
+dist/
+build/
+node_modules/
+.dart_tool/
+.venv/
+__pycache__/
+
+# Hand-made synthetic fixtures are public; keep them despite the patterns above.
+!testdata/**
+
+# Built player page (npm --prefix web run build); keep only the placeholder.
+!internal/ui/dist/
+internal/ui/dist/*
+!internal/ui/dist/.gitkeep
+
+# Local builds
+bin/
+
+# Folder records written by the app into a media folder
+.jusplay/

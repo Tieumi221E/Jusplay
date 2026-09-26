@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jusplay.invalid/schema/attachment/0",
+  "title": "jusplay MKV attachment manifest v0",
+  "type": "object",
+  "required": ["schema", "videoId", "snapshotId", "snapshotCapturedTo", "captureStatus", "assets", "media", "timing", "renderer", "createdAt"],
+  "properties": {
+    "schema": { "enum": ["jusplay-attachment/0", "kantanplay-attachment/0"] },
+    "videoId": { "description": "Niconico video id; empty when not known", "type": "string", "pattern": "^([a-z]{2}[0-9]+)?$" },
+    "snapshotId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "snapshotCapturedTo": { "type": ["string", "null"] },
+    "captureStatus": { "enum": ["verified-visible", "partial", "unknown"] },
+    "forks": {
+      "description": "Forks included in the playback file; empty means all.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "assets": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["name", "mime", "sha256", "bytes"],
+        "properties": {
+          "name": { "enum": ["jusplay.nico.raw.zip", "jusplay.nico.playback.json", "kantanplay.nico.raw.zip", "kantanplay.nico.playback.json"] },
+          "mime": { "enum": ["application/zip", "application/json"] },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "bytes": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "media": {
+      "type": "object",
+      "required": ["durationMs", "streams"],
+      "properties": {
+        "durationMs": { "type": ["integer", "null"] },
+        "streams": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "type", "codec"],
+            "properties": {
+              "index": { "type": "integer" },
+              "type": { "type": "string" },
+              "codec": { "type": "string" },
+              "language": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "required": ["mode", "source", "verified"],
+      "properties": {
+        "mode": { "enum": ["offset", "anchors"] },
+        "offsetMs": { "type": "integer" },
+        "anchors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["localMs", "nicoMs"],
+            "properties": {
+              "localMs": { "type": "integer" },
+              "nicoMs": { "type": "integer" }
+            }
+          }
+        },
+        "source": { "enum": ["manual", "matched"] },
+        "verified": { "type": "boolean" }
+      },
+      "if": { "properties": { "mode": { "const": "offset" } } },
+      "then": { "required": ["offsetMs"] },
+      "else": { "required": ["anchors"] }
+    },
+    "renderer": {
+      "type": "object",
+      "required": ["name", "version", "mode", "fonts"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "mode": { "type": "string" },
+        "fonts": { "type": "string" }
+      }
+    },
+    "createdAt": { "type": "string" }
+  }
+}

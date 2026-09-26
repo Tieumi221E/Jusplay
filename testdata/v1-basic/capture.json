@@ -1,0 +1,72 @@
+{
+  "schema": "kantanplay-capture/0",
+  "snapshotId": "00000000-0000-4000-8000-000000000001",
+  "videoId": "sm1",
+  "origin": "nv-comment-v1",
+  "capturedFrom": "2026-01-03T00:00:00Z",
+  "capturedTo": "2026-01-03T00:00:06Z",
+  "collector": {
+    "name": "synthetic fixture",
+    "version": "0"
+  },
+  "targets": [
+    {
+      "threadId": "1000",
+      "fork": "owner"
+    },
+    {
+      "threadId": "1001",
+      "fork": "main"
+    },
+    {
+      "threadId": "1001",
+      "fork": "easy"
+    }
+  ],
+  "pageDisplayProfile": "unknown",
+  "responses": [
+    {
+      "path": "responses/000001.json",
+      "sha256": "b00e966f00060813673a6947a5824a53f132799182cd905e24ed78d3b0f5214d",
+      "bytes": 3090,
+      "format": "nv-comment-v1",
+      "fetchedAt": "2026-01-03T00:00:00Z",
+      "target": null,
+      "window": null,
+      "httpStatus": 200,
+      "apiStatus": 200
+    },
+    {
+      "path": "responses/000002.json",
+      "sha256": "4564f98cd2ff2ae61d945c553cbf5d9d640de88cbcf348b66217e367cec4756e",
+      "bytes": 1374,
+      "format": "nv-comment-v1",
+      "fetchedAt": "2026-01-03T00:00:05Z",
+      "target": {
+        "threadId": "1001",
+        "fork": "main"
+      },
+      "window": {
+        "when": 1767193200
+      },
+      "httpStatus": 200,
+      "apiStatus": 200
+    },
+    {
+      "path": "responses/000003.json",
+      "sha256": "88e12fe93cf1da10869d3fe15f2321251849a637cd1be4b079ec1f41927896fb",
+      "bytes": 52,
+      "format": "nv-comment-v1",
+      "fetchedAt": "2026-01-03T00:00:06Z",
+      "target": {
+        "threadId": "1001",
+        "fork": "easy"
+      },
+      "window": {
+        "when": 1767193200
+      },
+      "httpStatus": 403,
+      "apiStatus": 403
+    }
+  ]
+}
