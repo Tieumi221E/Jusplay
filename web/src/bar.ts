@@ -11,6 +11,8 @@ export class SeekBar {
   private counts = new Float32Array(BINS);
   private max = 1;
   private vpos: Float64Array = new Float64Array(0); // sorted seconds
+  /** Hotspots from the comment analysis (Niconico time), when it is on. */
+  private hot: { peak: number; phrase: string }[] = [];
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -44,6 +46,12 @@ export class SeekBar {
     this.draw();
   }
 
+  /** Hotspots to mark above the density (report.ts HotspotR); [] clears them. */
+  setHotspots(hs: { Peak: number; phrases: { name: string }[] | null }[]): void {
+    this.hot = hs.map((h) => ({ peak: h.Peak, phrase: h.phrases?.[0]?.name ?? "" }));
+    this.draw();
+  }
+
   /** Comments whose Niconico time falls in [from, to) seconds. */
   countBetween(from: number, to: number): number {
     return lowerBound(this.vpos, to) - lowerBound(this.vpos, from);
@@ -56,7 +64,9 @@ export class SeekBar {
     const bin = (this.duration / BINS);
     const nico = t + this.offsetSeconds();
     const n = this.countBetween(nico - bin / 2, nico + bin / 2);
-    this.tip.textContent = `${fmtTime(t)} · ${n} ${L("条", "件")}`;
+    // Near a hotspot: what was said there.
+    const near = this.hot.find((h) => Math.abs(h.peak - nico) <= bin * 1.5);
+    this.tip.textContent = `${fmtTime(t)} · ${n} ${L("条", "件")}${near?.phrase ? ` · ${L("“", "「")}${near.phrase}${L("”", "」")}` : ""}`;
     this.tip.hidden = false;
     this.tip.style.left = `${r.left + x}px`;
     this.tip.style.top = `${r.top - 30}px`;
@@ -88,6 +98,21 @@ export class SeekBar {
       const left = i * bw - x(off);
       g.fillStyle = left < played ? done : ahead;
       g.fillRect(left, h - 4 * dpr - bh, Math.max(1, bw - 0.5), bh);
+    }
+    // Hotspots: a small dot at the top, in the accent colour, ringed in the bar's surface.
+    if (this.hot.length) {
+      const r = 2.5 * dpr;
+      for (const hs of this.hot) {
+        const cx = x(hs.peak - off);
+        g.beginPath();
+        g.arc(cx, r + 1 * dpr, r + 1 * dpr, 0, Math.PI * 2);
+        g.fillStyle = col("--hot-ring") || "rgba(0,0,0,.4)";
+        g.fill();
+        g.beginPath();
+        g.arc(cx, r + 1 * dpr, r, 0, Math.PI * 2);
+        g.fillStyle = col("--accent");
+        g.fill();
+      }
     }
   }
 }

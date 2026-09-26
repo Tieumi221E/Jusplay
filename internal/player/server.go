@@ -79,8 +79,9 @@ type Session struct {
 	Prev string `json:"prev,omitempty"`
 	Next string `json:"next,omitempty"`
 
-	mu      sync.Mutex
-	cancels map[string]context.CancelFunc // one live stream per track
+	mu       sync.Mutex
+	cancels  map[string]context.CancelFunc // one live stream per track
+	analysis *analysis                     // the comment analysis, made on request
 }
 
 // LoadComments finds comment data for video, in this order:
@@ -219,6 +220,9 @@ type Server struct {
 	openedStreams atomic.Int64
 
 	ai subsState
+
+	ctMu sync.Mutex
+	ct   *ctJob // the comment translation running, if any
 }
 
 const keepSessions = 3
@@ -339,6 +343,7 @@ func (s *Server) Start() (string, error) {
 }
 
 func (s *Server) Close() error {
+	s.stopCT()
 	s.closeAI()
 	s.mu.Lock()
 	for _, sess := range s.sessions {
@@ -547,6 +552,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.libraryAPI(w, r, p)
 		return
 	}
+	if p == "api/ctranslate" || strings.HasPrefix(p, "api/ctranslate/") {
+		s.ctranslateAPI(w, r, p)
+		return
+	}
 	if p == "api/ai" || strings.HasPrefix(p, "api/ai/") {
 		s.aiAPI(w, r, p)
 		return
@@ -568,6 +577,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.stream(w, r, q.Get("id"), strings.TrimPrefix(p, "api/stream/"))
 	case p == "api/episodes" && r.Method == http.MethodGet:
 		s.episodes(w, r.URL.Query().Get("id"))
+	case p == "api/analysis" && r.Method == http.MethodGet:
+		s.analysisAPI(w, r)
 	case p == "api/comments" && r.Method == http.MethodGet:
 		sess, err := s.Session(q.Get("id"))
 		if err != nil || sess.Comments.playback == nil {

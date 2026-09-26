@@ -88,6 +88,16 @@ const display = (): Field[] => [
   { id: "strokeWidth", kind: "range", label: L("描边粗细", "縁取りの太さ"), min: 0, max: 3, step: 0.1, fmt: pct, get: (s) => s.comments.strokeWidth, set: (s, v) => (s.comments.strokeWidth = v) },
   { id: "mode", kind: "select", label: L("渲染模式", "描画モード"), options: [["default", L("自动（按投稿时间）", "自動（投稿日時で判定）")], ["html5", "HTML5"], ["flash", "Flash"]], get: (s) => s.comments.mode, set: (s, v) => (s.comments.mode = v as Settings["comments"]["mode"]) },
   { id: "keepCA", kind: "toggle", label: L("评论画位置修正", "コメントアート位置補正"), get: (s) => s.comments.keepCA, set: (s, v) => (s.comments.keepCA = v), hint: "niconicomments keepCA" },
+  {
+    id: "ctrans", kind: "select", label: L("弹幕翻译", "コメント翻訳"),
+    options: [["off", L("关", "オフ")], ["zh", L("译成中文", "中国語に")], ["ja", L("译成日文", "日本語に")]],
+    get: (s) => s.comments.translate, set: (s, v) => (s.comments.translate = v),
+  },
+  { id: "hideUntranslated", kind: "toggle", label: L("隐藏未翻译的弹幕", "未翻訳のコメントを隠す"), get: (s) => s.comments.hideUntranslated, set: (s, v) => (s.comments.hideUntranslated = v) },
+  {
+    id: "analysis", kind: "toggle", label: L("弹幕分析", "コメント分析"), get: (s) => s.analysis.enabled, set: (s, v) => (s.analysis.enabled = v),
+    hint: L("在播放条上标出高能时刻", "再生バーに盛り上がりどころを表示"),
+  },
   { id: "frameRate", kind: "select", label: L("动画帧率", "描画フレームレート"), options: [["display", L("跟随显示器", "ディスプレイに合わせる")], ["60", L("60 帧", "60 fps")], ["video", L("跟随视频帧", "動画のフレームに合わせる")]], get: (s) => s.comments.frameRate, set: (s, v) => (s.comments.frameRate = v as "display" | "60" | "video") },
 ];
 
@@ -106,23 +116,21 @@ const subtitleFields = (): Field[] => [
   {
     id: "subPick", kind: "select", label: L("字幕", "字幕"), options: subSlots.options(),
     get: () => subSlots.get(0), set: (_s, v) => subSlots.set(0, v),
-    hint: L("外挂、内嵌或 AI 生成的字幕；快捷键 T 显示 / 隐藏", "外部・内蔵・AI 生成の字幕。ショートカット T で表示 / 非表示"),
+    hint: L("快捷键 T", "ショートカット T"),
   },
   {
     id: "subPick2", kind: "select", label: L("第二字幕", "第 2 字幕"), options: subSlots.options(),
     get: () => subSlots.get(1), set: (_s, v) => subSlots.set(1, v),
-    hint: L("显示在主字幕下方，较小，例如原文", "メイン字幕の下に小さく表示（原文など）"),
+    hint: L("显示在主字幕下方", "メイン字幕の下に表示"),
   },
   { id: "subScale", kind: "range", label: L("字幕字号", "字幕の文字サイズ"), min: 0.5, max: 2, step: 0.05, fmt: pct, get: (s) => s.subtitles.scale, set: (s, v) => (s.subtitles.scale = v) },
   {
     id: "subAi", kind: "toggle", label: L("没有字幕时用 AI 生成", "字幕がなければ AI で作る"), get: (s) => s.subtitles.ai, set: (s, v) => (s.subtitles.ai = v),
-    hint: L("视频没有外挂或内嵌字幕时，自动显示 AI 译文；也可随时在上方选择 AI 字幕", "外部・内蔵字幕がない動画では AI 翻訳を自動で表示します。上でいつでも AI 字幕を選べます"),
   },
   {
     id: "subSource", kind: "select", label: L("原声语言", "音声の言語"),
     options: [["", L("自动（按开头的台词判断）", "自動（最初のセリフで判断）")], ["Japanese", "日本語"], ["Chinese", "中文"], ["English", "English"], ["Korean", "한국어"], ["Cantonese", "粵語"], ["French", "Français"], ["German", "Deutsch"], ["Spanish", "Español"], ["Russian", "Русский"]],
     get: (s) => s.subtitles.source, set: (s, v) => (s.subtitles.source = v),
-    hint: L("指定后逐句按这种语言识别，不再逐句判断；已生成的字幕不变", "指定すると、1 行ずつ判断せずこの言語として認識します。作成済みの字幕は変わりません"),
   },
   {
     id: "subTarget", kind: "select", label: L("翻译为", "翻訳先"),
@@ -135,8 +143,7 @@ const filters = (): Field[] => [
   {
     id: "cap", kind: "range", label: L("总量上限", "総量上限"), min: 0, max: 10, step: 0.5, fmt: (v) => (v ? L(`每秒 ${v} 条`, `毎秒 ${v} 件`) : unlimited()),
     get: (s) => s.filters.capPerSecond, set: (s, v) => (s.filters.capPerSecond = v),
-    hint: L("按视频时长计的总条数（至少 100），同 danmk.py；投稿者评论与评论画不计入、不删减；每次抽中的是同一批",
-      "動画の長さから総数を決めます（最低 100 件、danmk.py と同じ）。投稿者コメントとコメントアートは数えず、削りません。毎回同じコメントが選ばれます"),
+    hint: L("投稿者弹幕和评论画不计入", "投稿者コメントとコメントアートは数えません"),
   },
   { id: "ngWords", kind: "lines", label: L("NG 词", "NG ワード"), placeholder: L("每行一个；/正则/ 也可以", "1 行に 1 つ。/正規表現/ も使えます"), get: (s) => s.filters.ngWords, set: (s, v) => (s.filters.ngWords = v) },
   { id: "ngUsers", kind: "lines", label: L("NG 用户 ID", "NG ユーザー ID"), placeholder: L("每行一个 userId", "1 行に 1 つの userId"), get: (s) => s.filters.ngUsers, set: (s, v) => (s.filters.ngUsers = v) },
@@ -157,8 +164,7 @@ const filters = (): Field[] => [
     id: "ngShare", kind: "select", label: L("NG 共享等级", "NG 共有レベル"),
     options: [["none", L("无", "なし")], ["weak", "弱（score ≤ −10000）"], ["medium", "中（≤ −4800）"], ["strong", L("强（≤ −1000）", "強（≤ −1000）")]],
     get: (s) => s.filters.ngShare, set: (s, v) => (s.filters.ngShare = v as Settings["filters"]["ngShare"]),
-    hint: L("阈值据公开资料，未与官网实测核对；旧 XML 导入的数据没有 score",
-      "しきい値は公開情報に基づくもので、公式サイトでの実測とは照合していません。旧 XML から取り込んだデータには score がありません"),
+    hint: L("旧 XML 数据没有分数", "旧 XML のデータにはスコアがありません"),
   },
   { id: "maxLength", kind: "range", label: L("最大长度", "最大文字数"), min: 0, max: 200, step: 5, fmt: (v) => (v ? L(`${v} 字`, `${v} 文字`) : unlimited()), get: (s) => s.filters.maxLength, set: (s, v) => (s.filters.maxLength = v), hint: L("评论画不受此限", "コメントアートは対象外") },
   { id: "postedBefore", kind: "datetime", label: L("只显示此前投稿", "指定日時までの投稿"), get: (s) => s.filters.postedBefore, set: (s, v) => (s.filters.postedBefore = v), hint: L("重现某一时刻的弹幕；留空关闭", "ある時点のコメントを再現します。空欄で無効") },
@@ -357,7 +363,9 @@ export function buildPanel(root: HTMLElement, s: Settings, changed: () => void):
 }
 
 /** The settings people change while watching, for the quick card. */
-export const QUICK = ["enabled", "opacity", "scale", "area", "limit", "frameRate"];
+/** The quick card; "@…" entries are section headings. */
+export const QUICK = ["@comments", "enabled", "ctrans", "opacity", "scale", "area", "limit", "frameRate", "@analysis", "analysis"];
+const HEADS: Record<string, () => string> = { "@comments": () => L("弹幕", "コメント"), "@analysis": () => L("分析", "分析") };
 /** The subtitle card (its own button): tracks, size, AI when there are none. */
 export const SUB_QUICK = ["subPick", "subPick2", "subScale", "subAi"];
 
@@ -369,16 +377,24 @@ export interface Quick {
 export function buildQuick(root: HTMLElement, s: Settings, changed: () => void, ids = QUICK): Quick {
   root.replaceChildren();
   const defs = byId([...display(), ...subtitleFields()]);
-  const rows = ids.map((id) => {
+  const heads: [HTMLElement, () => string][] = [];
+  const rows = ids.flatMap((id) => {
+    if (id.startsWith("@")) {
+      const h = el("h4", { class: "quick-head" }, HEADS[id]());
+      heads.push([h, HEADS[id]]);
+      root.append(h);
+      return [];
+    }
     const r = makeRow(defs.get(id)!, s, changed);
     root.append(r.el);
-    return [id, r] as const;
+    return [[id, r] as const];
   });
   return {
     refresh: () => rows.forEach(([, r]) => r.refresh()),
     relabel() {
       const d = byId([...display(), ...subtitleFields()]);
       for (const [id, r] of rows) r.relabel(d.get(id)!);
+      for (const [h, t] of heads) h.textContent = t();
     },
   };
 }

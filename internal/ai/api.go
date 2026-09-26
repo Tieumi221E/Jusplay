@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/http"
+	"strings"
 )
 
 // apiTranscribe sends a line's audio to an OpenAI-compatible
@@ -46,12 +47,19 @@ func apiTranscribe(ctx context.Context, p plan, wavData []byte, lang string) (st
 }
 
 // apiTranslate asks an OpenAI-compatible /chat/completions to translate one line.
-func apiTranslate(ctx context.Context, p plan, text, target string) (string, error) {
+func apiTranslate(ctx context.Context, p plan, text, target string, terms [][2]string) (string, error) {
+	system := "You translate video subtitles. Translate the user's line into " + target + ". Keep the tone of speech. Output only the translation, nothing else."
+	if len(terms) > 0 {
+		var b strings.Builder
+		for _, t := range terms {
+			b.WriteString(t[0] + " → " + t[1] + "; ")
+		}
+		system += " Render these names and terms this way: " + b.String()
+	}
 	return chat(ctx, p.url+"/chat/completions", p.apiKey, map[string]any{
 		"model": p.model,
 		"messages": []any{
-			map[string]any{"role": "system", "content": "You translate video subtitles. Translate the user's line into " + target +
-				". Keep the tone of speech. Output only the translation, nothing else."},
+			map[string]any{"role": "system", "content": system},
 			map[string]any{"role": "user", "content": text},
 		},
 		"temperature": 0.3,

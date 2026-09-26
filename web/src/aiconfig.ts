@@ -109,14 +109,13 @@ export function buildAiConfig(root: HTMLElement, changed: () => void, signal: Ab
       return box;
     }
     if (!d.missing?.length) {
-      box.append(el("div", {}, L("推荐模型已下载：Qwen3-ASR-0.6B（识别）、Hy-MT2-1.8B（翻译）", "推奨モデルはダウンロード済み：Qwen3-ASR-0.6B（認識）、Hy-MT2-1.8B（翻訳）")));
+      box.append(el("div", {}, L("推荐模型已下载", "推奨モデルはダウンロード済み")));
       return box;
     }
     const go = el("button", { class: "link" }, `${L("下载推荐模型", "推奨モデルをダウンロード")}（${gb(d.bytes)}）`);
     go.onclick = () => fetch("api/ai/download", { method: "POST" }).then(load);
     box.append(
-      el("div", {}, L("推荐模型：Qwen3-ASR-0.6B（识别）与 Hy-MT2-1.8B（翻译），由 llama.cpp 在本机运行。不随 Jusplay 附带，需要时从 GitHub 与 Hugging Face 下载，校验 SHA-256 后放在：",
-        "推奨モデル：Qwen3-ASR-0.6B（認識）と Hy-MT2-1.8B（翻訳）。llama.cpp でこの PC 上で動かします。Jusplay には含まれず、必要なときに GitHub と Hugging Face からダウンロードし、SHA-256 を確認して次に置きます：")),
+      el("div", {}, L("推荐模型未下载，将保存到：", "推奨モデルは未ダウンロード。保存先：")),
       el("div", { class: "path" }, info!.config.dir),
     );
     if (d.error) box.append(el("div", { class: "err" }, `${L("上次下载失败：", "前回のダウンロードに失敗：")}${d.error}`));
@@ -139,9 +138,6 @@ export function buildAiConfig(root: HTMLElement, changed: () => void, signal: Ab
     if (b.kind === "local") {
       box.append(pathRow(L("模型", "モデル"), b.model, "*.gguf", (v) => (b.model = v), window.kpPickModel));
       if (task === "asr") box.append(pathRow("mmproj", b.proj, "mmproj-*.gguf", (v) => (b.proj = v), window.kpPickModel));
-      box.append(el("div", { class: "hint" }, task === "asr"
-        ? L("llama.cpp 支持的音频模型，如 Qwen3-ASR、Voxtral；需要对应的 mmproj 文件", "llama.cpp が対応する音声モデル（Qwen3-ASR、Voxtral など）。対応する mmproj ファイルが必要です")
-        : L("llama.cpp 能运行的对话模型（GGUF）", "llama.cpp で動く対話モデル（GGUF）")));
     }
     if (b.kind === "api") {
       box.append(textRow(L("地址", "アドレス"), b.url, "https://api.openai.com/v1", (v) => (b.url = v)));

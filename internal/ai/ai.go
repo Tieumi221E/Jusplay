@@ -137,7 +137,11 @@ func (e *Engine) planFor(task string) (plan, error) {
 		}
 		args := []string{"-m", model}
 		if task == "asr" {
-			args = append(args, "--mmproj", proj)
+			args = append(args, "--mmproj", proj, "-c", "4096", "-np", "1")
+		} else {
+			// Eight slots decoded together: on an integrated GPU, 1.6× the
+			// lines per second of one slot, for many short comment lines.
+			args = append(args, "-c", "8192", "-np", fmt.Sprint(localSlots))
 		}
 		name := strings.TrimSuffix(filepath.Base(model), ".gguf")
 		return plan{kind: "local", name: name, exe: exe, args: args, qwen: strings.Contains(strings.ToLower(name), "qwen3-asr")}, nil
@@ -319,8 +323,24 @@ func SameLanguage(lang, target string) bool {
 	return false
 }
 
-// Translate translates one line into target (a key of Targets).
-func (e *Engine) Translate(ctx context.Context, text, target string) (string, error) {
+// localSlots is how many requests a local translation server decodes together.
+const localSlots = 8
+
+// Parallel is how many translations may run at once.
+func (e *Engine) Parallel() int {
+	p, err := e.planFor("mt")
+	switch {
+	case err != nil:
+		return 1
+	case p.kind == "api":
+		return 4
+	}
+	return localSlots
+}
+
+// Translate translates one line into target (a key of Targets), rendering
+// the given terms (source, translation) as listed.
+func (e *Engine) Translate(ctx context.Context, text, target string, terms ...[2]string) (string, error) {
 	names, ok := Targets[target]
 	if !ok {
 		return "", fmt.Errorf("unknown target language %q", target)
@@ -330,13 +350,13 @@ func (e *Engine) Translate(ctx context.Context, text, target string) (string, er
 		return "", err
 	}
 	if p.kind == "api" {
-		out, err := apiTranslate(ctx, p, text, names[1])
+		out, err := apiTranslate(ctx, p, text, names[1], terms)
 		return strings.TrimSpace(out), err
 	}
 	s, err := e.local(ctx, p)
 	if err != nil {
 		return "", err
 	}
-	out, err := localTranslate(ctx, s, text, names[0])
+	out, err := localTranslate(ctx, s, text, names[0], terms)
 	return strings.TrimSpace(out), err
 }

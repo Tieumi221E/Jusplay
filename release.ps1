@@ -3,8 +3,9 @@
 # third-party notices; nothing from this machine's data) with its SHA-256.
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
+# Go from PATH; a clear stop here rather than a silent failure later.
 $go = (Get-Command go -ErrorAction SilentlyContinue).Source
-if (-not $go) { $go = 'C:\Application\Go\bin\go.exe' }
+if (-not $go) { throw 'go not found on PATH' }
 $version = (Get-Content VERSION -Raw).Trim()
 
 & $go vet ./...

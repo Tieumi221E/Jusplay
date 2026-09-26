@@ -14,6 +14,7 @@ import { episodeLayer, type Episode } from "./episodes.ts";
 import { onBack, setTitle, host, framed, BACK_KEYS } from "./nav.ts";
 import { Subtitles } from "./subs.ts";
 import { buildAiConfig } from "./aiconfig.ts";
+import { renderReport, type Report } from "./report.ts";
 import { subSlots, SUB_QUICK } from "./ui.ts";
 
 interface CommentsInfo {
@@ -68,7 +69,7 @@ const PLAYER_TEXT: StaticText[] = [
   ["#volume", "aria-label", "音量", "音量"],
   ["#rate", "aria-label", "倍速", "再生速度"],
   ["#toggle-comments", "aria-label", "弹幕开关", "コメント表示"],
-  ["#open-quick", "aria-label", "弹幕设置", "コメント設定"],
+  ["#open-quick", "aria-label", "设置", "設定"],
   ["#open-subs", "aria-label", "字幕", "字幕"],
   ["#subcard-file", "textContent", "加载字幕文件…", "字幕ファイルを読み込む…"],
   ["#subcard-more", "textContent", "更多字幕设置", "字幕の詳細設定"],
@@ -78,6 +79,8 @@ const PLAYER_TEXT: StaticText[] = [
   ["#panel header strong", "textContent", "设置", "設定"],
   ["#help-title", "textContent", "快捷键", "ショートカット"],
   ["#help-done", "textContent", "完成", "完了"],
+  ["#open-report", "textContent", "弹幕报告", "コメントレポート"],
+  ["#report-done", "textContent", "完成", "完了"],
   ["#source h3", "textContent", "弹幕", "コメント"],
   ["#source .lbl", "textContent", "来源", "読み込み元"],
   ["#pick-comments", "textContent", "选择弹幕文件…", "コメントファイルを選択…"],
@@ -278,6 +281,18 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   const ai = subtitles.ai;
   let stats: FilterStats | null = null;
   const seekBar = new SeekBar($("#density"), $("#seektip"), $("#seek"), video, sess.media.duration, () => overlay.offset / 1000, signal);
+  // Comment analysis (internal/danmaku), made by the server on first request:
+  // hotspot marks on the seek bar while it is on, and the report.
+  let analysisReq: Promise<Report | null> | null = null;
+  const analysis = () => (analysisReq ??= sess.comments.source === "none" ? Promise.resolve(null)
+    : fetch(withId("api/analysis"), { signal }).then((r) => (r.ok ? (r.json() as Promise<Report>) : null)).catch(() => null));
+  const applyAnalysis = () => {
+    if (!s.analysis.enabled) return seekBar.setHotspots([]);
+    void analysis().then((rep) => {
+      if (rep && s.analysis.enabled && !signal.aborted) seekBar.setHotspots(rep.hotspots ?? []);
+    });
+  };
+  applyAnalysis();
   const rebuild = async () => {
     if (!threads) {
       await overlay.load(null, s.comments);
@@ -288,8 +303,13 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     const r = applyFilters(threads, s.filters, s.comments, sess.media.duration);
     stats = r.stats;
     panel.setStats(stats);
-    seekBar.setComments(r.threads);
-    await overlay.load(r.threads, s.comments);
+    sendShown(r.threads);
+    const shown = translated(r.threads);
+    seekBar.setComments(shown);
+    ct.lastBuild = performance.now();
+    ct.pending = 0;
+    ct.near = 0;
+    await overlay.load(shown, s.comments);
     if (overlay.error) showError(`${L("弹幕渲染器拒绝了数据：", "コメント描画エンジンがデータを受け付けませんでした：")}${overlay.error}`);
     updateMeta();
   };
@@ -300,6 +320,122 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     void [opacity, area, enabled, frameRate];
     return JSON.stringify([rest, s.filters]);
   };
+
+  // ---- comment translation (server: api/ctranslate) ----
+  // Translations arrive a phrase at a time; the layout is rebuilt in
+  // batches, not per phrase (a full layout takes a noticeable moment).
+  const ct = { target: "off", version: 0, map: new Map<string, string>(), need: new Set<string>(), pending: 0, lastBuild: 0, timer: 0, posTimer: 0, status: "",
+    shown: [] as string[], shownSig: "", near: 0, times: null as Map<string, number[]> | null };
+  // Where each comment text is said (Niconico seconds), to tell whether new
+  // translations matter for what is about to be shown.
+  const timesOf = () => {
+    if (!ct.times) {
+      ct.times = new Map();
+      for (const t of threads ?? []) for (const c of t.comments) {
+        const l = ct.times.get(c.body);
+        if (l) l.push(c.vposMs / 1000);
+        else ct.times.set(c.body, [c.vposMs / 1000]);
+      }
+    }
+    return ct.times;
+  };
+  // Only the comments shown (after the filters and the cap) are translated:
+  // the server is told which, again whenever the filters change them.
+  const sendShown = (ts: V1Thread[]) => {
+    ct.shown = ts.flatMap((t) => t.comments.map((c) => c.body));
+    let h = 0;
+    for (const b of ct.shown) for (let i = 0; i < b.length; i++) h = (h * 31 + b.charCodeAt(i)) | 0;
+    const sig = `${ct.shown.length}:${h}`;
+    if (sig === ct.shownSig || ct.target === "off") return;
+    ct.shownSig = sig;
+    ct.version = 0;
+    fetch("api/ctranslate", { method: "POST", body: JSON.stringify({ id: sess.id, target: ct.target, pos: nicoNow(), shown: ct.shown }) }).catch(() => undefined);
+  };
+  const translated = (ts: V1Thread[]): V1Thread[] => {
+    if (s.comments.translate === "off" || ct.target !== s.comments.translate) return ts;
+    return ts.map((t) => ({
+      ...t,
+      comments: t.comments.flatMap((c) => {
+        const tr = ct.map.get(c.body);
+        if (tr) return [{ ...c, body: tr }];
+        return ct.need.has(c.body) && s.comments.hideUntranslated ? [] : [c];
+      }),
+    }));
+  };
+  const nicoNow = () => video.currentTime + overlay.offset / 1000;
+  const postPos = () => {
+    if (ct.target === "off") return;
+    fetch("api/ctranslate", { method: "POST", body: JSON.stringify({ id: sess.id, target: ct.target, pos: nicoNow() }) }).catch(() => undefined);
+  };
+  const pollCT = async () => {
+    clearTimeout(ct.timer);
+    if (ct.target === "off" || signal.aborted) return;
+    try {
+      const r = await fetch(`api/ctranslate?id=${encodeURIComponent(sess.id)}&target=${ct.target}&since=${ct.version}`, { signal });
+      if (r.ok) {
+        const j = (await r.json()) as { version: number; items: [string, string][] | null; need?: string[]; running: boolean; error: string; model: string; comments: number; translatedComments: number };
+        if (j.need) ct.need = new Set(j.need);
+        for (const [body, tr] of j.items ?? []) ct.map.set(body, tr);
+        ct.pending += (j.items ?? []).length;
+        // Rebuilding the layout is costly: only for translations in the next minute.
+        const now = nicoNow(), times = timesOf();
+        for (const [body] of j.items ?? []) if (times.get(body)?.some((t) => t >= now - 2 && t <= now + 60)) ct.near++;
+        ct.version = j.version;
+        ct.status = j.error ? `${L("出错：", "エラー：")}${j.error}`
+          : `${L("已翻译", "翻訳済み")} ${j.comments ? Math.round((j.translatedComments / j.comments) * 100) : 100}%${j.running ? L("，翻译中…", "、翻訳中…") : ""}${j.model ? ` · ${j.model}` : ""}`;
+        renderCTStatus();
+        const firstBatch = ct.pending > 0 && ct.map.size === ct.pending;
+        if (ct.near >= 5 && (performance.now() - ct.lastBuild > 10_000 || video.paused) || firstBatch) void rebuild();
+        if (!j.running && !j.error && ct.pending) void rebuild();
+      }
+    } catch {
+      /* the page is going */
+    }
+    ct.timer = window.setTimeout(pollCT, 2000);
+  };
+  const applyCT = async () => {
+    const want = s.comments.translate;
+    if (want === ct.target) return;
+    ct.target = want;
+    ct.version = 0;
+    ct.map.clear();
+    ct.need.clear();
+    ct.pending = 0;
+    ct.status = "";
+    clearTimeout(ct.timer);
+    if (want === "off") {
+      fetch("api/ctranslate/stop", { method: "POST" }).catch(() => undefined);
+      renderCTStatus();
+      return;
+    }
+    const ai = await fetch("api/ai").then((r) => (r.ok ? r.json() : null)).catch(() => null) as { translate?: boolean } | null;
+    if (!ai?.translate) {
+      toast(L("弹幕翻译需要先在字幕设置里下载模型或设置接口", "コメント翻訳は字幕の設定でモデルか API を用意してください"), 5000);
+    }
+    ct.shownSig = "";
+    fetch("api/ctranslate", { method: "POST", body: JSON.stringify({ id: sess.id, target: want, pos: nicoNow(), shown: ct.shown }) })
+      .then(() => void pollCT()).catch(() => undefined);
+  };
+  video.addEventListener("seeked", () => {
+    clearTimeout(ct.posTimer);
+    ct.posTimer = window.setTimeout(() => {
+      postPos();
+      if (ct.pending) void rebuild();
+    }, 300);
+  }, { signal });
+  video.addEventListener("pause", () => void (ct.pending && rebuild()), { signal });
+  const ctPosLoop = window.setInterval(postPos, 20_000);
+  signal.addEventListener("abort", () => {
+    clearInterval(ctPosLoop);
+    clearTimeout(ct.timer);
+    clearTimeout(ct.posTimer);
+  });
+  const ctStatus = document.createElement("div");
+  ctStatus.className = "stats";
+  function renderCTStatus(): void {
+    ctStatus.hidden = !ct.status;
+    ctStatus.textContent = ct.status ? `${L("弹幕翻译：", "コメント翻訳：")}${ct.status}` : "";
+  }
 
   // ---- persistence ----
   let saveTimer = 0;
@@ -319,11 +455,12 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
       rebuildTimer = window.setTimeout(rebuild, 150);
     } else overlay.restyle(s.comments);
     subtitles.update();
+    applyAnalysis();
+    void applyCT();
     updateToggles();
     save();
   };
-  const noAi = () => L("AI 字幕还不能用：在“更多设置 → 字幕”里下载推荐模型，或选择自己的模型 / 在线接口",
-    "AI 字幕はまだ使えません。「詳細設定 → 字幕」で推奨モデルをダウンロードするか、自分のモデル / オンライン API を選んでください");
+  const noAi = () => L("AI 字幕需要先在字幕设置里下载模型或设置接口", "AI 字幕は字幕の設定でモデルか API を用意してください");
   const toggleSubs = () => {
     s.subtitles.show = !s.subtitles.show;
     onSettings();
@@ -342,7 +479,10 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   };
 
   const panel = buildPanel($("#panel-body"), s, onSettings);
+  $("#panel-body section").append(ctStatus);
+  renderCTStatus();
   const quick = buildQuick($("#quick-body"), s, onSettings);
+  $("#quick-body").append($("#open-report")); // under its section, not in the foot
   const subCard = buildQuick($("#subcard-body"), s, onSettings, SUB_QUICK);
   // The subtitles section of the settings: loading a file; the AI lines:
   // how far they are made, by which models (machine-made text says so),
@@ -406,6 +546,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   // meeting the comment fonts and characters for the first time (text
   // measurement: 223 ms cold, 15 ms warm for 2881 comments).
   const firstBuilt = rebuild().then(() => mark("commentsBuilt"));
+  void applyCT(); // translation left on last time
   signal.addEventListener("abort", () => {
     // Pending writes are done now, not dropped; timers go.
     if (saveTimer) fetch("api/settings", { method: "PUT", body: JSON.stringify(s) }).catch(() => undefined);
@@ -416,7 +557,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     }
     saveProgress();
     // Panels and the episode layer close with their episode (choosing one is going there).
-    for (const l of [quickLayer, subLayer, panelLayer, helpLayer, episodes.layer]) l.hide();
+    for (const l of [quickLayer, subLayer, panelLayer, helpLayer, reportLayer, episodes.layer]) l.hide();
   });
 
   // ---- comment source ----
@@ -618,6 +759,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   const subLayer = new Layer($("#subcard"), layers, $("#open-subs"));
   const panelLayer = new Layer(panelEl, layers);
   const helpLayer = new Layer($("#help"), layers);
+  const reportLayer = new Layer($("#report"), layers);
   const toggleQuick = () => {
     if (!quickLayer.isOpen) {
       quick.refresh();
@@ -657,12 +799,52 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   $("#open-settings").onclick = openPanel;
   $("#open-help").onclick = toggleHelp;
   $("#help-done").onclick = () => helpLayer.hide();
+  // The comment report: a document of what the analysis found (report.ts).
+  const openReport = async () => {
+    quickLayer.hide();
+    subLayer.hide();
+    episodes.layer.hide();
+    const body = $("#report-body");
+    const epLabel = episodeLabel(sess.season, sess.episode) || (sess.episode == null ? sess.title : "");
+    $("#report-title").textContent = `${sess.series || sess.title}${epLabel ? " " + epLabel : ""}`;
+    $("#report-sub").textContent = L("弹幕报告", "コメントレポート");
+    body.replaceChildren(Object.assign(document.createElement("div"), { className: "rp-loading", textContent: L("正在分析弹幕…", "コメントを分析しています…") }));
+    reportLayer.show();
+    const rep = await analysis();
+    if (!reportLayer.isOpen) return;
+    if (!rep) {
+      body.firstElementChild!.textContent = sess.comments.source === "none" ? L("这一集没有弹幕数据。", "このエピソードにはコメントデータがありません。") : L("无法分析这一集的弹幕。", "このエピソードのコメントを分析できませんでした。");
+      return;
+    }
+    const when = (iso?: string) => (iso ? iso.slice(0, 16).replace("T", " ") : "—");
+    renderReport(body, $("#report-tip"), rep, {
+      title: $("#report-title").textContent ?? "",
+      subtitle: "",
+      offset: overlay.offset / 1000,
+      seek: (nico) => {
+        video.currentTime = Math.min(sess.media.duration, Math.max(0, nico - overlay.offset / 1000));
+        reportLayer.hide();
+      },
+      provenance: [
+        [L("文件", "ファイル"), sess.file],
+        [L("弹幕来源", "コメントの読み込み元"), sourceName(sess.comments.source)],
+        [L("视频 ID", "動画 ID"), sess.comments.videoId ?? "—"],
+        [L("弹幕条数", "コメント数"), new Intl.NumberFormat(L("zh-CN", "ja-JP")).format(rep.comments)],
+        [L("投稿时间范围（日本时间）", "投稿期間（日本時間）"), `${when(rep.posting.First)} – ${when(rep.posting.Last)}`],
+        [L("采集状态", "取得状態"), status(sess.comments.captureStatus) || "—"],
+        [L("报告生成时间", "レポート作成日時"), new Date().toLocaleString(L("zh-CN", "ja-JP"), { hour12: false })],
+      ],
+    });
+  };
+  $("#open-report").onclick = () => void openReport();
+  $("#report-done").onclick = () => reportLayer.hide();
+  $<HTMLButtonElement>("#open-report").disabled = sess.comments.source === "none";
   const renderHelp = () => {
     const keys: [string, string, string][] = [
       ["Space / K", "播放 / 暂停", "再生 / 一時停止"], ["← →", "后退 / 前进 5 秒（Shift：1 秒）", "5 秒戻る / 進む（Shift：1 秒）"],
       ["↑ ↓ / " + L("滚轮", "ホイール"), "音量", "音量"], ["0–9", "跳到 0%–90%", "0%–90% へ移動"],
       [", .", "暂停时逐帧", "一時停止中にコマ送り"], ["[ ]", "倍速", "再生速度"], ["M", "静音", "ミュート"],
-      ["C", "弹幕开关", "コメント表示"], ["T", "字幕开关", "字幕表示"], ["- =", "弹幕偏移 ±100 ms", "コメントのずれ ±100 ms"], ["S", "弹幕设置", "コメント設定"],
+      ["C", "弹幕开关", "コメント表示"], ["T", "字幕开关", "字幕表示"], ["- =", "弹幕偏移 ±100 ms", "コメントのずれ ±100 ms"], ["S", "设置", "設定"],
       ["F / " + L("双击", "ダブルクリック"), "全屏", "全画面"], ["N P", "下一集 / 上一集", "次の話 / 前の話"],
       ["E", "剧集", "エピソード"], [BACK_KEYS, "返回媒体库", "ライブラリに戻る"], ["?", "快捷键", "ショートカット"], ["Esc", "关闭 / 退出全屏", "閉じる / 全画面を終了"],
     ];

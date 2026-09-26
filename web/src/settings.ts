@@ -28,6 +28,10 @@ export interface CommentSettings {
   area: number;
   /** "display": draw every display refresh with interpolated time; "video": once per video frame. */
   frameRate: "display" | "60" | "video";
+  /** Translate comments into this language ("off", "zh", "ja"). */
+  translate: string;
+  /** While translating, hide the comments not translated yet. */
+  hideUntranslated: boolean;
 }
 
 export interface FilterSettings {
@@ -81,6 +85,8 @@ export interface Settings {
   playback: { volume: number; muted: boolean; rate: number };
   comments: CommentSettings;
   subtitles: SubtitleSettings;
+  /** Comment analysis (danmaku): hotspot marks on the seek bar, and the report. */
+  analysis: { enabled: boolean };
   filters: FilterSettings;
   /** Per-video values keyed by Session.key. */
   videos: Record<string, { offsetMs: number }>;
@@ -106,8 +112,11 @@ export const defaults = (): Settings => ({
     strokeWidth: 1,
     area: 100,
     frameRate: "display",
+    translate: "off",
+    hideUntranslated: true,
   },
   subtitles: { show: true, ai: false, target: "", scale: 1, source: "" },
+  analysis: { enabled: false },
   filters: {
     ngWords: [],
     ngUsers: [],
@@ -162,6 +171,7 @@ export function merge(stored: Json): Settings {
   if (!["default", "html5", "flash"].includes(c.mode)) c.mode = "default";
   if (!["asc", "desc"].includes(c.limitOrder)) c.limitOrder = "asc";
   if (!["display", "60", "video"].includes(c.frameRate)) c.frameRate = "display";
+  if (!["off", "zh", "ja"].includes(c.translate)) c.translate = "off";
   if (!/^#[0-9a-fA-F]{6}$/.test(c.strokeColor)) c.strokeColor = "#000000";
   const f = out.filters;
   if (!["none", "weak", "medium", "strong"].includes(f.ngShare)) f.ngShare = "none";

@@ -3,8 +3,9 @@
 # Explorer; see cmd/jusplay/console_windows.go for terminal use).
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
+# Go from PATH; a clear stop here rather than a silent failure later.
 $go = (Get-Command go -ErrorAction SilentlyContinue).Source
-if (-not $go) { $go = 'C:\Application\Go\bin\go.exe' }
+if (-not $go) { throw 'go not found on PATH' }
 npm --prefix web run build
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 # The version comes from VERSION. -s -w leave out the symbol table and

@@ -313,8 +313,7 @@ function renderHome(): void {
   if (!state.folders.length) {
     view.append(h("div", { class: "empty-state" },
       h("div", { class: "big", text: L("把动画文件夹加进来", "アニメのフォルダーを追加しましょう") }),
-      h("p", { text: L("Jusplay 会找出里面的视频，按系列整理，并记住看到哪里。文件不会被移动或修改。",
-        "Jusplay がフォルダー内の動画を見つけてシリーズごとに整理し、どこまで見たかを覚えます。ファイルを移動・変更することはありません。") }),
+      h("p", { text: L("按系列整理并记住进度，不会移动或修改文件。", "シリーズごとに整理して続きを覚えます。ファイルは変更しません。") }),
       Object.assign(h("button", { class: "primary", text: L("添加文件夹", "フォルダーを追加") }), { onclick: addFolder })));
     return;
   }
@@ -599,15 +598,15 @@ async function embed(e: Entry): Promise<void> {
   // Replacing comments already in the file: say so first, and where the
   // current ones go (the server keeps them before touching the file).
   if (e.probe?.attached && !confirm(L(
-    `${epName(e)} 里已经有弹幕。用同名 JSON 替换吗？\n\n原来的弹幕会先备份到这个媒体文件夹的 .jusplay\\backup 里。`,
-    `${epName(e)} にはすでにコメントが格納されています。同名の JSON で置き換えますか？\n\n今のコメントは先にこのフォルダーの .jusplay\\backup に保存されます。`))) return;
+    `${epName(e)} 已有弹幕，用同名 JSON 替换吗？\n\n原弹幕会先备份到 .jusplay\\backup。`,
+    `${epName(e)} にはコメントがあります。同名の JSON で置き換えますか？\n\n今のコメントは .jusplay\\backup に保存されます。`))) return;
   toast(L(`正在打包 ${epName(e)}…`, `${epName(e)} を格納中…`), 60000);
   const r = await post("api/library/embed", { id: e.id });
   if (!r.ok) toast(`${L("打包失败：", "格納に失敗しました：")}${(await r.text()).slice(0, 200)}`, 5000);
   else {
     const j = await r.json();
     const n = j.comments.toLocaleString(), sec = (j.tookMs / 1000).toFixed(1);
-    toast(L(`已打包 ${n} 条弹幕（${sec} 秒，原片已逐包核对）`, `コメント ${n} 件を格納しました（${sec} 秒、元の映像はパケット単位で照合済み）`));
+    toast(L(`已打包 ${n} 条弹幕（${sec} 秒）`, `コメント ${n} 件を格納しました（${sec} 秒）`));
   }
   refresh(true);
 }
@@ -635,8 +634,8 @@ function renderFolders(): void {
     const n = state.entries.filter((e) => e.folder === f && !e.missing).length;
     const rm = h("button", { title: L("从媒体库移除（不删除文件）", "ライブラリから外す（ファイルは削除しません）"), text: L("移除", "外す") });
     rm.onclick = async () => {
-      if (!confirm(L(`从媒体库移除这个文件夹？\n${f}\n\n文件不会被删除。观看记录留在这个文件夹里（.jusplay），重新添加即可恢复。`,
-        `このフォルダーをライブラリから外しますか？\n${f}\n\nファイルは削除されません。視聴記録はこのフォルダー内（.jusplay）に残り、追加し直すと戻ります。`))) return;
+      if (!confirm(L(`从媒体库移除这个文件夹？\n${f}\n\n文件不会被删除，重新添加即可恢复记录。`,
+        `このフォルダーをライブラリから外しますか？\n${f}\n\nファイルは削除されず、追加し直すと記録も戻ります。`))) return;
       await post("api/library/folders", { path: f, remove: true });
       await refresh(true);
       renderFolders();

@@ -69,8 +69,17 @@ func parseASR(out string) Transcription {
 // translation prompt, one line at a time: given the lines before as
 // background (its "Structured Data 2" prompt), the 1.8B model translated
 // those too, into this line.
-func localTranslate(ctx context.Context, s *server, text, targetName string) (string, error) {
+func localTranslate(ctx context.Context, s *server, text, targetName string, terms [][2]string) (string, error) {
 	prompt := "将以下文本翻译为" + targetName + "，注意只需要输出翻译后的结果，不要额外解释：\n\n" + text
+	if len(terms) > 0 {
+		// The model card's terminology prompt: names keep one rendering.
+		var b strings.Builder
+		b.WriteString("参考下面的翻译：\n")
+		for _, t := range terms {
+			b.WriteString(t[0] + " 翻译成 " + t[1] + "\n")
+		}
+		prompt = b.String() + prompt
+	}
 	// The model card's recommended sampling for the 1.8B and 7B models.
 	return s.chat(ctx, map[string]any{
 		"messages":       []any{map[string]any{"role": "user", "content": prompt}},
@@ -112,8 +121,9 @@ func start(ctx context.Context, exe string, args []string, logf func(string, ...
 		return nil, err
 	}
 	// -ngl 99: every layer on the GPU when there is one (the Vulkan build
-	// falls back to the CPU when there is none); one request at a time.
-	args = append(args, "--host", "127.0.0.1", "--port", fmt.Sprint(port), "-ngl", "99", "-c", "4096", "-np", "1", "--no-webui")
+	// falls back to the CPU when there is none). Context and slots come
+	// with the plan.
+	args = append(args, "--host", "127.0.0.1", "--port", fmt.Sprint(port), "-ngl", "99", "--no-webui")
 	cmd := exec.Command(exe, args...)
 	cmd.Dir = filepath.Dir(exe)
 	var tail tailBuffer
