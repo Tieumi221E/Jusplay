@@ -1,7 +1,9 @@
 // Interface language and colour theme, shared by both pages. The values come
 // from prefs.js (a blocking script in <head>, so the first paint is already
-// right) and are saved back through api/prefs. Switching re-renders in place:
+// right) and are saved back through prefs.set (cap.ts). Switching re-renders in place:
 // no reload, so playback is not interrupted.
+
+import { cap } from "./cap.ts";
 
 export type Lang = "zh" | "ja";
 export type Theme = "dark" | "light";
@@ -69,10 +71,21 @@ function apply<K extends keyof Prefs>(k: K, v: Prefs[K]): boolean {
   return true;
 }
 
+/**
+ * Choices changed elsewhere (the command line, prefs.set): shown at once
+ * here and in the other page, without saving them again.
+ */
+export function applyPrefs(p: Partial<Prefs>): void {
+  for (const k of Object.keys(p) as (keyof Prefs)[]) {
+    const v = p[k];
+    if (v !== undefined && k in prefs && apply(k, v as never)) channel?.postMessage({ k, v });
+  }
+}
+
 export function setPref<K extends keyof Prefs>(k: K, v: Prefs[K]): void {
   if (!apply(k, v)) return;
   channel?.postMessage({ k, v });
-  fetch("api/prefs", { method: "PUT", body: JSON.stringify({ [k]: v }) }).catch(() => undefined);
+  cap("prefs.set", { [k]: v }).catch(() => undefined);
 }
 
 const SUN = '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3.6"/><path d="M10 2.2v1.9M10 15.9v1.9M2.2 10h1.9M15.9 10h1.9M4.5 4.5l1.3 1.3M14.2 14.2l1.3 1.3M4.5 15.5l1.3-1.3M14.2 5.8l1.3-1.3"/></svg>';

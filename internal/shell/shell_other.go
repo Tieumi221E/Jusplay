@@ -12,3 +12,5 @@ func Open(title, url string, dark bool, profile string) (*Window, error) {
 
 func (*Window) Run()   {}
 func (*Window) Close() {}
+
+func AllowForeground(pid int) {}

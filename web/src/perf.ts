@@ -1,4 +1,4 @@
-// Interaction latency, always on (docs/design.md §二.1 and §二.6). The
+// Interaction latency, always on. The
 // browser reports only interactions that took 16 ms or more from input to
 // the next frame (Event Timing), so watching costs next to nothing when the
 // page is fast. Each interaction over 50 ms goes to the Go log at once; a

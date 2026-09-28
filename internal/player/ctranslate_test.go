@@ -1,6 +1,7 @@
 package player
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -185,5 +186,62 @@ func TestCommentTranslationUnits(t *testing.T) {
 	d := j.bodies["よく言うセリフよく言うセリフ"]
 	if d.repeat != 2 || d.unit.text != "よく言うセリフ" {
 		t.Errorf("doubling %+v", d)
+	}
+}
+
+// comments translate (the command line): the comments shown under the
+// saved settings — here with an NG word hiding one line — are translated,
+// and the call returns when they are done.
+func TestTranslateCommentsWithoutThePage(t *testing.T) {
+	var mu sync.Mutex
+	var asked []string
+	svc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct{ Messages []struct{ Content string } }
+		json.NewDecoder(r.Body).Decode(&body)
+		line := body.Messages[len(body.Messages)-1].Content
+		mu.Lock()
+		asked = append(asked, line)
+		mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": "译:" + line}}}})
+	}))
+	defer svc.Close()
+	dir := t.TempDir()
+	video := filepath.Join(dir, "S - 01.mkv")
+	b, _ := os.ReadFile("../../testdata/media/tiny.mkv")
+	os.WriteFile(video, b, 0o644)
+	mk := func(i int, body string) map[string]any {
+		return map[string]any{"id": fmt.Sprint("t", i), "no": i, "vposMs": 100 * i, "body": body, "commands": []string{}, "userId": fmt.Sprint("u", i),
+			"isPremium": false, "score": 0, "postedAt": "2026-01-01T00:00:00+09:00", "nicoruCount": 0, "nicoruId": nil, "source": "trunk", "isMyPost": false}
+	}
+	raw, _ := json.Marshal([]any{map[string]any{"id": 0, "fork": "main", "commentCount": 2, "comments": []any{mk(1, "よく言うセリフ"), mk(2, "すこし珍しい")}}})
+	os.WriteFile(filepath.Join(dir, "S - 01.json"), raw, 0o644)
+	lib, _ := library.Open(filepath.Join(dir, "folders.json"))
+	e, err := lib.Ensure(video)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := OpenSettings("")
+	settings.Put([]byte(`{"filters":{"ngWords":["珍しい"]}}`))
+	s := New(lib, fstest.MapFS{}, settings, "", t.TempDir())
+	eng := ai.New(t.TempDir(), "")
+	if err := eng.SetConfig(ai.PublicConfig{ASR: ai.PublicBackend{Kind: "recommended"}, MT: ai.PublicBackend{Kind: "api", URL: svc.URL, Model: "m"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.SetAI(eng)
+	sess, err := s.Session(e.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.TranslateComments(context.Background(), sess, e, "zh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st["running"] != false || st["comments"] != 1 || st["translatedComments"] != 1 {
+		t.Fatalf("status %v", st)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(asked, "|") != "よく言うセリフ" {
+		t.Fatalf("asked %q: the hidden line must not be translated", asked)
 	}
 }

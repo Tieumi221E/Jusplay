@@ -100,10 +100,6 @@ func (s *Server) begin(parent context.Context) (context.Context, func()) {
 
 func (s *Server) subsAPI(w http.ResponseWriter, r *http.Request, p string) {
 	q := r.URL.Query()
-	if p == "api/subs/pick" && r.Method == http.MethodPost {
-		s.subtitlePick(w, r)
-		return
-	}
 	e, ok := s.lib.Get(q.Get("id"))
 	if !ok {
 		http.Error(w, "no such entry", http.StatusNotFound)
@@ -119,10 +115,6 @@ func (s *Server) subsAPI(w http.ResponseWriter, r *http.Request, p string) {
 	switch {
 	case p == "api/subs/tracks" && r.Method == http.MethodGet:
 		s.subtitleTracks(w, e)
-	case p == "api/subs/file" && r.Method == http.MethodGet:
-		s.subtitleFile(w, e, q.Get("key"))
-	case p == "api/subs/embedded" && r.Method == http.MethodGet:
-		s.subtitleEmbedded(w, e, q.Get("track"))
 	case p == "api/subs" && r.Method == http.MethodGet:
 		t, err := subs.Load(s.subsPath(e))
 		out := s.aiStatus()

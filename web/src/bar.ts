@@ -2,7 +2,7 @@
 // slider, a hover tooltip, and a line of media and comment facts.
 
 import { L } from "./i18n.ts";
-import type { V1Thread } from "./filter.ts";
+import type { V1Thread } from "./threads.ts";
 import { fmtTime } from "./ui.ts";
 
 const BINS = 240;

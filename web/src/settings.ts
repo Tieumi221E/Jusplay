@@ -90,6 +90,8 @@ export interface Settings {
   filters: FilterSettings;
   /** Per-video values keyed by Session.key. */
   videos: Record<string, { offsetMs: number }>;
+  /** 记一笔 (note.add): the Jusnote notebook folder and the note in it. */
+  notes: { notebook: string; file: string };
 }
 
 export const defaults = (): Settings => ({
@@ -128,6 +130,7 @@ export const defaults = (): Settings => ({
     capPerSecond: 2,
   },
   videos: {},
+  notes: { notebook: "", file: "Jusplay.md" },
 });
 
 type Json = unknown;

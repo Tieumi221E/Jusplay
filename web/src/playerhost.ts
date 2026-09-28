@@ -1,5 +1,5 @@
-// The player lives over the library, in one iframe kept for the whole run
-// (docs/design.md 五.3): opening an episode does not load a page, and the
+// The player lives over the library, in one iframe kept for the whole run:
+// opening an episode does not load a page, and the
 // library stays underneath as it was (scroll, focus, filters). The player
 // page is loaded once, at an idle moment after the library, and kept; on
 // back only its episode ends (stream and renderer), so the next opening is
@@ -18,16 +18,32 @@
 // same thumbnail in the same place until its first frame, so the hand-over
 // at the end of the zoom cannot be seen.
 
+import type { Command, LiveEvent, LiveState } from "./live.ts";
+
 interface PlayerApi {
-  open(id: string, thumb?: string): Promise<void>;
+  open(id: string, thumb?: string, at?: number): Promise<void>;
+  command(c: Command): Promise<unknown>;
+  state(): LiveState | null;
+  /** An event of the live session, for the player to take in. */
+  event(ev: LiveEvent): void;
   close(): void;
 }
 
 const reduced = matchMedia("(prefers-reduced-motion: reduce)");
 
 export interface PlayerHost {
-  /** Open id, zooming from the element it was chosen from. */
-  open(id: string, thumb: string | undefined, from: Element | null): void;
+  /**
+   * Open id, zooming from the element it was chosen from (at: where to
+   * start); settled when its media is ready. Playing already, the player
+   * switches to it.
+   */
+  open(id: string, thumb: string | undefined, from: Element | null, at?: number): Promise<void>;
+  /** A live-session command for the playing episode (seek, pause, play, back, subs-all). */
+  command(c: Command): Promise<unknown>;
+  /** What the player shows, when playing. */
+  state(): LiveState | null;
+  /** Hands an event of the live session to the player, when it is loaded. */
+  event(ev: LiveEvent): void;
   /** An episode is pointed at or focused: have the player ready. */
   warm(): void;
   readonly playing: boolean;
@@ -47,6 +63,7 @@ export function playerHost(opts: {
   let api: PlayerApi | null = null;
   let loaded: Promise<PlayerApi> | null = null;
   let playing = false;
+  let closedWaiters: (() => void)[] = [];
 
   const load = () => (loaded ??= new Promise<PlayerApi>((resolve) => {
     const t0 = performance.now();
@@ -150,6 +167,7 @@ export function playerHost(opts: {
     const to = opts.sourceOf(id);
     await zoomOut(opts.thumbOf(id), to);
     opts.onClosed(id);
+    for (const w of closedWaiters.splice(0)) w();
   });
 
   return {
@@ -157,21 +175,31 @@ export function playerHost(opts: {
       return playing;
     },
     warm: () => void load(),
-    open(id, thumb, from) {
-      if (playing) return;
+    async open(id, thumb, from, at) {
+      if (playing) return (await load()).open(id, thumb, at);
       playing = true;
       const zoom = zoomIn(thumb, from);
-      void load().then(async (p) => {
-        // The player puts the thumbnail up at once and starts the episode
-        // under it; the hand-over waits for the zoom only.
-        void p.open(id, thumb);
-        await zoom;
-        // The player shows the same thumbnail in the same place: hand over.
-        document.body.classList.add("playing");
-        box.hidden = true;
-        frame.focus();
-        frame.contentWindow?.focus();
-      });
+      const p = await load();
+      // The player puts the thumbnail up at once and starts the episode
+      // under it; the hand-over waits for the zoom only.
+      const ready = p.open(id, thumb, at);
+      await zoom;
+      // The player shows the same thumbnail in the same place: hand over.
+      document.body.classList.add("playing");
+      box.hidden = true;
+      frame.focus();
+      frame.contentWindow?.focus();
+      await ready;
     },
+    async command(c) {
+      if (!playing || !api) throw new Error("no video is playing");
+      if (c.cmd !== "back") return api.command(c);
+      const closed = new Promise<void>((r) => closedWaiters.push(r));
+      await api.command(c);
+      await closed;
+      return undefined;
+    },
+    state: () => (playing ? api?.state() ?? null : null),
+    event: (ev) => api?.event(ev),
   };
 }

@@ -20,11 +20,12 @@ export interface MediaInfo {
   audioNote?: string;
 }
 
+import { aheadAcross, gapTarget, rangesOf } from "./gaps.ts";
+
 type Kind = "video" | "audio";
 
 const AHEAD = 60; // seconds buffered ahead before reading pauses
 const BEHIND = 30; // seconds kept behind the playhead
-
 class Feeder {
   private gen = 0;
   private abort: AbortController | null = null;
@@ -80,18 +81,14 @@ class Feeder {
   }
 
   private ahead(t: number): number {
-    const b = this.sb.buffered;
-    for (let i = 0; i < b.length; i++) if (b.start(i) <= t + 0.05 && t < b.end(i)) return b.end(i) - t;
-    return 0;
+    return aheadAcross(rangesOf(this.sb.buffered), t);
   }
 
-  private async evict(t: number): Promise<void> {
-    const b = this.sb.buffered;
-    const ranges: [number, number][] = [];
-    for (let i = 0; i < b.length; i++) ranges.push([b.start(i), b.end(i)]);
-    for (const [s, e] of ranges) {
-      if (e < t - BEHIND) await this.op(() => this.sb.remove(s, e));
-      else if (s < t - BEHIND) await this.op(() => this.sb.remove(s, t - BEHIND));
+  /** Remove what is more than behind seconds before t, and far ahead of it. */
+  private async evict(t: number, behind = BEHIND): Promise<void> {
+    for (const [s, e] of rangesOf(this.sb.buffered)) {
+      if (e < t - behind) await this.op(() => this.sb.remove(s, e));
+      else if (s < t - behind) await this.op(() => this.sb.remove(s, t - behind));
       if (s > t + AHEAD + 30) await this.op(() => this.sb.remove(s, e));
     }
   }
@@ -142,7 +139,7 @@ class Feeder {
           await new Promise((r) => setTimeout(r, 250));
         }
         if (gen !== this.gen) return;
-        await this.append(value);
+        await this.append(value, gen);
         if (first) {
           this.firstAppendMs = performance.now() - t0;
           first = false;
@@ -157,15 +154,23 @@ class Feeder {
     }
   }
 
-  private async append(chunk: Uint8Array): Promise<void> {
+  /**
+   * Append, making room when the SourceBuffer is full: what was played is
+   * let go (all but the last 2 s once the usual 30 s did not suffice), and
+   * the append waits for playback to move on. Only after 20 s without room
+   * is it an error.
+   */
+  private async append(chunk: Uint8Array, gen: number): Promise<void> {
     for (let attempt = 0; ; attempt++) {
       try {
         await this.op(() => this.sb.appendBuffer(chunk as BufferSource));
         return;
       } catch (e) {
-        if ((e as DOMException).name !== "QuotaExceededError" || attempt > 3) throw e;
-        await this.evict(this.video.currentTime);
+        if ((e as DOMException).name !== "QuotaExceededError" || attempt >= 40) throw e;
+        if (gen !== this.gen) return;
+        await this.evict(this.video.currentTime, attempt === 0 ? BEHIND : 2);
         await new Promise((r) => setTimeout(r, 500));
+        if (gen !== this.gen) return;
       }
     }
   }
@@ -182,8 +187,11 @@ export class Engine {
   private restartTimer = 0;
   private url = "";
   private readonly seeking = () => this.onSeeking();
+  private watchdog = 0;
   /** Stream restarts caused by seeks outside the buffer. */
   restarts = 0;
+  /** Holes in the buffer played over (gapTarget), with where. */
+  gapJumps: { from: number; to: number }[] = [];
 
   constructor(private readonly video: HTMLVideoElement, private readonly info: MediaInfo, private readonly id: string) {}
 
@@ -228,6 +236,31 @@ export class Engine {
     this.video.addEventListener("seeking", this.seeking);
     this.startAll(startAt);
     if (startAt > 0) this.video.currentTime = startAt;
+    this.watchStalls();
+  }
+
+  /**
+   * Playing but not moving for half a second, in front of a small hole in
+   * the buffer: jump over it (the browser waits there forever).
+   */
+  private watchStalls(): void {
+    let last = -1;
+    let since = performance.now();
+    this.watchdog = window.setInterval(() => {
+      const v = this.video;
+      const t = v.currentTime;
+      if (v.paused || v.ended || v.seeking || t !== last) {
+        last = t;
+        since = performance.now();
+        return;
+      }
+      if (performance.now() - since < 500) return;
+      const to = gapTarget(rangesOf(v.buffered), t);
+      if (to === null) return;
+      this.gapJumps.push({ from: +t.toFixed(3), to: +to.toFixed(3) });
+      v.currentTime = to;
+      since = performance.now();
+    }, 250);
   }
 
   private startAll(t: number): void {
@@ -268,6 +301,7 @@ export class Engine {
     for (const f of this.feeders) f.stop();
     this.video.removeEventListener("seeking", this.seeking);
     clearTimeout(this.restartTimer);
+    clearInterval(this.watchdog);
     if (this.url) URL.revokeObjectURL(this.url);
   }
 }

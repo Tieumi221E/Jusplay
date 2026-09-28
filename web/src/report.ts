@@ -527,6 +527,7 @@ export function renderReport(root: HTMLElement, tipBox: HTMLElement, rep: Report
     tile(L("高级会员占比", "プレミアムの割合"), pct(u.premiumShare)));
 
   const print = el("button", "link rp-print", L("打印 / 导出 PDF", "印刷 / PDF に書き出す"));
+  print.dataset.cap = "ui"; // the engine's print dialog; the report's data is analysis.get
   print.addEventListener("click", () => window.print());
 
   root.replaceChildren(

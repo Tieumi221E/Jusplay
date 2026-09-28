@@ -1,4 +1,4 @@
-// One navigation model for both pages (docs/design.md, navigation): "back"
+// One navigation model for both pages: "back"
 // is Alt+←, Backspace and the mouse's back button everywhere, and the
 // on-screen back control shows those keys. Escape closes the innermost
 // thing first (a layer, fullscreen); only then does it go back, and on the
@@ -7,7 +7,7 @@
 export const BACK_KEYS = "Alt ← / Backspace";
 
 declare global {
-  interface Window { kpTitle?: (t: string) => Promise<void> }
+  interface Window { kpTitle?: (t: string) => Promise<void>; kpFront?: () => Promise<void> }
 }
 
 /** The page that has the shell's bindings (kpFullscreen, kpTitle, …): this

@@ -12,7 +12,15 @@
 
 import type { SubtitleSettings } from "./settings.ts";
 import { L, prefs } from "./i18n.ts";
-import { fromEmbedded, parseFile, type EmbeddedEvent, type Line } from "./subformats.ts";
+import { cap } from "./cap.ts";
+
+/** A subtitle line as the window reads it (internal/subs, subs.show). */
+export interface Line {
+  start: number;
+  end: number;
+  text: string;
+  top?: boolean;
+}
 import { AiMaker } from "./aisubs.ts";
 
 export interface TrackOption {
@@ -160,15 +168,18 @@ export class Subtitles {
     if (slot === 0) this.pick = key;
     else this.pick2 = key;
     if (key !== "off") this.s.show = true;
-    fetch("api/subs/pick", { method: "POST", body: JSON.stringify({ id: this.id, pick: this.pick, pick2: this.pick2, file }) }).catch(() => undefined);
+    cap("subs.pick", { entry: this.id, pick: this.pick, pick2: this.pick2, ...(file ? { file } : {}) }).catch(() => undefined);
     await this.load(key);
     this.update();
   }
 
   /** A subtitle file picked by hand becomes the main track. */
   async useFile(path: string): Promise<string | null> {
-    const r = await fetch("api/subs/pick", { method: "POST", body: JSON.stringify({ id: this.id, pick: "manual", pick2: this.pick2, file: path }) });
-    if (!r.ok) return await r.text();
+    try {
+      await cap("subs.pick", { entry: this.id, pick: "manual", pick2: this.pick2, file: path });
+    } catch (e) {
+      return (e as Error).message;
+    }
     this.loaded.delete("manual");
     this.errors.delete("manual");
     await this.refresh();
@@ -198,17 +209,9 @@ export class Subtitles {
   }
 
   private async fetchTrack(key: string): Promise<Line[]> {
-    const id = encodeURIComponent(this.id);
-    if (key.startsWith("mkv:")) {
-      const r = await fetch(`api/subs/embedded?id=${id}&track=${key.slice(4)}`, { signal: this.signal });
-      if (!r.ok) throw new Error(await r.text());
-      const j = (await r.json()) as { codec: string; events: EmbeddedEvent[] | null };
-      return fromEmbedded(j.codec, j.events ?? []);
-    }
-    const r = await fetch(`api/subs/file?id=${id}&key=${encodeURIComponent(key)}`, { signal: this.signal });
-    if (!r.ok) throw new Error(await r.text());
-    const f = key === "manual" ? this.info?.manual : this.info?.files?.find((x) => `file:${x.name}` === key);
-    return parseFile(new Uint8Array(await r.arrayBuffer()), f?.format ?? "srt");
+    // Read by the window, the same way the command line's subs show reads it.
+    const r = await cap<{ lines: Line[] }>("subs.show", { entry: this.id, track: key }, this.signal);
+    return r.lines;
   }
 
   /** Settings or the choice changed. */

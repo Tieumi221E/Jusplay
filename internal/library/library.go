@@ -105,6 +105,26 @@ type vault struct {
 	root string
 	// err is why the records cannot be saved ("" when they can).
 	err string
+	// seen is the records file as last read or written here; a file that
+	// no longer matches was changed by someone else (another process, an
+	// agent, a text editor) and is merged in before the next write.
+	seen fingerprint
+}
+
+// fingerprint identifies a file's content cheaply: size and time first,
+// the hash only when those changed.
+type fingerprint struct {
+	size int64
+	mod  time.Time
+	sum  [32]byte
+}
+
+func fingerprintOf(b []byte, st fs.FileInfo) fingerprint {
+	f := fingerprint{sum: sha256.Sum256(b)}
+	if st != nil {
+		f.size, f.mod = st.Size(), st.ModTime()
+	}
+	return f
 }
 
 func (v *vault) dir() string  { return filepath.Join(v.root, VaultDir) }
@@ -176,16 +196,41 @@ func (l *Library) addVault(dir string) {
 	v := &vault{root: dir}
 	l.vaults[key] = v
 	l.folders = append(l.folders, dir)
-	b, err := os.ReadFile(v.file())
+	b, st, err := readFile(v.file())
 	if err != nil {
 		return // none yet, or the drive is away
 	}
-	var d vaultDoc
-	if err := json.Unmarshal(b, &d); err != nil {
+	entries, err := parseVault(dir, b)
+	if err != nil {
 		// Left as it is; this folder's records stay in memory until it is fixed.
 		v.err = fmt.Sprintf("%s: %v", v.file(), err)
 		return
 	}
+	v.seen = fingerprintOf(b, st)
+	for _, e := range entries {
+		l.entries[e.ID] = e
+	}
+}
+
+func readFile(path string) ([]byte, fs.FileInfo, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return b, st, nil
+}
+
+// parseVault reads a folder's records into entries with absolute paths.
+func parseVault(dir string, b []byte) ([]*Entry, error) {
+	var d vaultDoc
+	if err := json.Unmarshal(b, &d); err != nil {
+		return nil, err
+	}
+	var out []*Entry
 	for _, se := range d.Entries {
 		if se == nil || se.Entry == nil || se.Path == "" || filepath.IsAbs(se.Path) || strings.HasPrefix(filepath.Clean(se.Path), "..") {
 			continue
@@ -193,16 +238,114 @@ func (l *Library) addVault(dir string) {
 		e := se.Entry
 		e.Path = filepath.Join(dir, se.Path)
 		e.ID, e.Folder = IDFor(e.Path), dir
-		l.entries[e.ID] = e
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// syncVault merges changes others made to v's records file since it was
+// last read or written here; callers hold mu. What the user decides about
+// a file (progress, watched, comment source and offset, subtitle choice)
+// is taken from the file, except for the entries in keep (the change being
+// written now wins for those); what the scan finds (names, probes, missing)
+// stays as known here; entries only the file has are added. A file that
+// cannot be read (drive away) changes nothing; an unparsable one then
+// blocks writing, as at load.
+func (l *Library) syncVault(v *vault, keep ...string) {
+	if l.foldersPath == "" {
+		return
+	}
+	st, err := os.Stat(v.file())
+	if err != nil || (st.Size() == v.seen.size && st.ModTime().Equal(v.seen.mod)) {
+		return
+	}
+	b, st, err := readFile(v.file())
+	if err != nil {
+		return
+	}
+	f := fingerprintOf(b, st)
+	if f.sum == v.seen.sum {
+		v.seen = f // touched, not changed
+		return
+	}
+	entries, err := parseVault(v.root, b)
+	if err != nil {
+		v.err = fmt.Sprintf("%s: %v", v.file(), err)
+		return
+	}
+	kept := map[string]bool{}
+	for _, id := range keep {
+		kept[id] = true
+	}
+	for _, d := range entries {
+		m := l.entries[d.ID]
+		switch {
+		case m == nil:
+			l.entries[d.ID] = d
+		case !kept[d.ID]:
+			m.userFrom(d)
+		}
+	}
+	v.seen = f
+	if strings.HasPrefix(v.err, v.file()+":") {
+		v.err = "" // it parses again
 	}
 }
+
+// userFrom copies what the user decides about a file from d.
+func (e *Entry) userFrom(d *Entry) {
+	e.Position, e.Watched, e.LastPlayed = d.Position, d.Watched, d.LastPlayed
+	e.Comments, e.OffsetMs, e.CommentCount = d.Comments, d.OffsetMs, d.CommentCount
+	e.SubPick, e.SubPick2, e.SubFile = d.SubPick, d.SubPick2, d.SubFile
+}
+
+// Version identifies what the user has decided about an entry (the fields
+// userFrom copies): a write based on it (UpdateIf) fails when it changed.
+func (e Entry) Version() string {
+	b, _ := json.Marshal([]any{e.Position, e.Watched, e.LastPlayed, e.Comments, e.OffsetMs, e.SubPick, e.SubPick2, e.SubFile})
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:8])
+}
+
+// Choices is what the user decides about a file (the fields userFrom
+// copies): what a change log keeps before and after a change.
+type Choices struct {
+	Position   float64    `json:"position"`
+	Watched    bool       `json:"watched"`
+	LastPlayed *time.Time `json:"lastPlayed,omitempty"`
+	Comments   string     `json:"comments,omitempty"`
+	OffsetMs   *int64     `json:"offsetMs,omitempty"`
+	SubPick    string     `json:"subPick,omitempty"`
+	SubPick2   string     `json:"subPick2,omitempty"`
+	SubFile    string     `json:"subFile,omitempty"`
+}
+
+func (e Entry) Choices() Choices {
+	return Choices{e.Position, e.Watched, e.LastPlayed, e.Comments, e.OffsetMs, e.SubPick, e.SubPick2, e.SubFile}
+}
+
+// SetChoices puts c back: for undoing a change, only when the entry is
+// still at version base (ErrConflict otherwise).
+func (l *Library) SetChoices(id, base string, c Choices) error {
+	return l.UpdateIf(id, base, func(e *Entry) {
+		e.Position, e.Watched, e.LastPlayed, e.Comments, e.OffsetMs = c.Position, c.Watched, c.LastPlayed, c.Comments, c.OffsetMs
+		e.SubPick, e.SubPick2, e.SubFile = c.SubPick, c.SubPick2, c.SubFile
+	})
+}
+
+// ErrConflict: the entry changed since the version a write was based on.
+var ErrConflict = errors.New("the entry changed since that version")
 
 // saveVault writes the records of one folder; callers hold mu. A folder
 // that cannot be written keeps them in memory and says why (FolderInfos);
 // that is not an error of the caller's change.
-func (l *Library) saveVault(v *vault) {
-	if l.foldersPath == "" || strings.HasPrefix(v.err, v.file()+":") {
-		return // in memory, or a records file we could not read: never overwritten
+func (l *Library) saveVault(v *vault, keep ...string) {
+	if l.foldersPath == "" {
+		return
+	}
+	l.syncVault(v, keep...)
+	if strings.HasPrefix(v.err, v.file()+":") {
+		return // a records file we could not read: never overwritten
 	}
 	d := vaultDoc{Version: 2, Entries: []*storedEntry{}}
 	for _, e := range l.entries {
@@ -224,6 +367,9 @@ func (l *Library) saveVault(v *vault) {
 	if err := writeAtomic(v.file(), b); err != nil {
 		v.err = err.Error()
 		return
+	}
+	if st, err := os.Stat(v.file()); err == nil {
+		v.seen = fingerprintOf(b, st)
 	}
 	v.err = ""
 	hide(v.dir())
@@ -249,7 +395,7 @@ func (l *Library) saveFolders() error {
 // saveOf saves the records of the folder e belongs to, if any; callers hold mu.
 func (l *Library) saveOf(e *Entry) {
 	if v := l.vaults[strings.ToLower(e.Folder)]; e.Folder != "" && v != nil {
-		l.saveVault(v)
+		l.saveVault(v, e.ID)
 	}
 }
 
@@ -401,16 +547,40 @@ func (l *Library) Get(id string) (Entry, bool) {
 }
 
 // Update changes one entry under the lock and saves its folder's records.
+// Changes others made to the records file are taken in first, so f works
+// on the entry as it is now and nobody's write is lost.
 func (l *Library) Update(id string, f func(*Entry)) error {
+	return l.UpdateIf(id, "", f)
+}
+
+// UpdateIf is Update when the entry's Version is still base ("" for any):
+// otherwise it changes nothing and returns ErrConflict.
+func (l *Library) UpdateIf(id, base string, f func(*Entry)) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	e, ok := l.entries[id]
 	if !ok {
 		return fmt.Errorf("no entry %s", id)
 	}
+	if v := l.vaults[strings.ToLower(e.Folder)]; e.Folder != "" && v != nil {
+		l.syncVault(v)
+	}
+	if base != "" && e.Version() != base {
+		return ErrConflict
+	}
 	f(e)
 	l.saveOf(e)
 	return nil
+}
+
+// Refresh takes in changes others made to the records files, so Get and
+// Entries show them.
+func (l *Library) Refresh() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, v := range l.vaults {
+		l.syncVault(v)
+	}
 }
 
 // Ensure adds a file opened directly. Under an added folder it joins that
@@ -490,14 +660,19 @@ func (l *Library) Import(folders []string, entries []Entry) (added int, err erro
 
 // ScanStats reports what a scan did.
 type ScanStats struct {
-	Folders, Files, Added, Changed, Missing int
-	Took                                    time.Duration
+	Folders int           `json:"folders"`
+	Files   int           `json:"files"`
+	Added   int           `json:"added"`
+	Changed int           `json:"changed"`
+	Missing int           `json:"missing"`
+	Took    time.Duration `json:"-"`
+	TookMs  int64         `json:"tookMs"`
 	// FolderErrors lists added folders that could not be read (unplugged
 	// drive, renamed folder); their files are not marked missing.
-	FolderErrors []string
+	FolderErrors []string `json:"folderErrors,omitempty"`
 	// Recovered lists files whose interrupted replacement (an embed cut
 	// short by a crash or power cut) was put right, and how.
-	Recovered []string
+	Recovered []string `json:"recovered,omitempty"`
 }
 
 // Scan walks every folder, adds new files, re-probes changed ones (size or
@@ -623,6 +798,7 @@ func (l *Library) Scan() (ScanStats, error) {
 		}
 	}
 	st.Took = time.Since(start)
+	st.TookMs = st.Took.Milliseconds()
 	for _, v := range l.vaults {
 		if !unreadable[strings.ToLower(v.root)] {
 			l.saveVault(v)

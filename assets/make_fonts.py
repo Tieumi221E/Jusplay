@@ -159,7 +159,7 @@ def drop_langs(font):
 
 
 # Spaces the font lacks, which comment art is laid out with (U+2004 and
-# friends; docs/architecture.md, comment fonts: without them a line of art
+# friends (comment fonts): without them a line of art
 # came out a median 21% off). Widths in font units (1000 per em): U+2000/1
 # are the en and em quads (Unicode: the same as U+2002/3), U+2007 is a
 # digit wide and U+2008 a full stop wide, as Unicode defines them; the rest

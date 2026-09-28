@@ -52,8 +52,7 @@ button.wide { width: 100%; border-radius: var(--r-md); }
 .glass { background: var(--glass); backdrop-filter: blur(22px) saturate(1.5); border: 1px solid var(--line); box-shadow: var(--shadow), inset 0 1px 0 var(--glass-hi); }
 
 /* Header */
-/* Header: floating capsule groups, as over the player (docs/design-language.md
-   §十), over a background that fades into the page instead of ending on a
+/* Header: floating capsule groups, as over the player, over a background that fades into the page instead of ending on a
    line. The capsules are glass without a blur: the page scrolls under them. */
 #top { position: sticky; top: 0; z-index: 5; height: 80px; display: flex; align-items: center; gap: 12px; padding: 0 16px; /* 16 from the window, as over the player */
   background: linear-gradient(var(--bg) 30%, color-mix(in srgb, var(--bg) 70%, transparent)); }
@@ -124,6 +123,8 @@ button.lang:hover { color: var(--fg); background: var(--field); }
 #folder-list button { padding: 3px 10px; background: transparent; border-color: transparent; color: var(--faint); }
 #folder-list button:hover { color: var(--fg); background: var(--field-hover); }
 #folder-list .empty { color: var(--faint); padding: 8px 12px; }
+#folder-list li.skill { padding-top: 0; padding-left: 28px; }
+#folder-list li.skill .path { color: var(--faint); font-size: 12px; direction: ltr; }
 
 /* Layout */
 #view { padding: 28px 32px 72px; max-width: 1720px; margin: 0 auto; }
@@ -254,16 +255,21 @@ h2:first-child { margin-top: 6px; }
 
 /* The player, over the library (playerhost.ts). While it plays the library
    is not drawn at all (content-visibility), so it costs nothing. */
-#player-frame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 100; visibility: hidden; background: transparent; }
+/* 100vw, not 100%: the page keeps a scrollbar gutter (scrollbar-gutter),
+   which a fixed box of 100% leaves uncovered at the right edge. */
+#player-frame { position: fixed; inset: 0; width: 100vw; height: 100%; border: 0; z-index: 100; visibility: hidden; background: transparent; }
 body.playing #player-frame { visibility: visible; }
 body.playing #view, body.playing #top { content-visibility: hidden; }
+/* The gutter kept for the scrollbar is the root's own strip, which no fixed
+   box covers: while the player is up there is nothing to scroll anyway. */
+html:has(> body.playing) { scrollbar-gutter: auto; overflow: hidden; }
 /* The zoom between a card and the picture: a thumbnail moved by transform
    (FLIP), over a backdrop in the player's letterbox colour. */
 #zoom { position: fixed; z-index: 101; transform-origin: 0 0; border-radius: var(--r-md); overflow: hidden; pointer-events: none; }
 #zoom img { width: 100%; height: 100%; object-fit: cover; display: block; }
 #zoom.moving { transition: transform var(--spring-smooth-t) var(--spring-smooth), opacity var(--t-page) var(--ease-out); }
 #zoom.fade { opacity: 0; }
-#zoom-bg { position: fixed; inset: 0; z-index: 99; background: #000; opacity: 0; pointer-events: none; transition: opacity var(--t-page) var(--ease-move); }
+#zoom-bg { position: fixed; inset: 0; width: 100vw; z-index: 99; background: #000; opacity: 0; pointer-events: none; transition: opacity var(--t-page) var(--ease-move); }
 :root[data-theme=light] #zoom-bg { background: #fff; }
 #zoom-bg.on { opacity: 1; }
 

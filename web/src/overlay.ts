@@ -4,7 +4,7 @@
 import { commentFonts, ensureCommentFont } from "./fonts.ts";
 import NiconiComments from "./nico/niconicomments.js";
 import type { CommentSettings } from "./settings.ts";
-import type { V1Thread } from "./filter.ts";
+import type { V1Thread } from "./threads.ts";
 
 /**
  * Presentation clock from requestVideoFrameCallback. In "display" mode the

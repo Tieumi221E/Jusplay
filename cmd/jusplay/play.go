@@ -41,6 +41,7 @@ type appFlags struct {
 
 func addAppFlags(fs *flag.FlagSet) *appFlags {
 	a := &appFlags{}
+	legacyToolFlags(fs)
 	fs.StringVar(&a.data, "data", "", "the app's data folder (default: jusplay-data next to the executable, else %AppData%\\jusplay)")
 	fs.BoolVar(&a.debugLog, "debug-log", false, "also write the log to <data>\\logs (it is otherwise kept in memory only)")
 	fs.BoolVar(&a.serve, "serve", false, "no window: print the page URL and serve until interrupted (debugging)")
@@ -90,46 +91,64 @@ func cmdPlay(args []string) error {
 	return runApp(*a, path, "index.html")
 }
 
-func runApp(a appFlags, video, page string) error {
-	if !ui.Built() {
-		return errors.New("page not built: run `npm --prefix web ci && npm --prefix web run build`, then rebuild")
-	}
+// appEnv is the app without its window: the data folder, the library and
+// the server over them. The window and the command line build it the same
+// way, so both work on the same files in the same way.
+type appEnv struct {
+	dir, temp string
+	lib       *library.Library
+	srv       *player.Server
+	mem       *memlog.Buffer
+	logger    *log.Logger
+}
+
+// openApp builds the app on its data folder (data, or the default one).
+// withTemp gives it the temporary folder the window needs; the command
+// line runs without one (nothing outside the media folders is cached).
+func openApp(data string, debugLog, withTemp bool) (*appEnv, error) {
 	// The log is kept in memory (the settings panel can copy it); a debug
 	// run also writes it, and crashes, to a file.
 	mem := memlog.New(4000)
 	logger := log.New(mem, "", log.LstdFlags|log.Lmicroseconds)
-	dir, portable := a.data, true
+	// JUSPLAY_DATA, as for the command line: a window started with it must
+	// not use (and write to) the usual data folder instead.
+	if data == "" {
+		data = os.Getenv("JUSPLAY_DATA")
+	}
+	dir, portable := data, true
 	if dir == "" {
 		var err error
 		if dir, portable, err = appdir.Dir(); err != nil {
-			return err
+			return nil, err
 		}
 	} else if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+		return nil, err
 	}
-	if a.debugLog {
+	if debugLog {
 		if f, p := openLogFile(filepath.Join(dir, "logs")); f != nil {
 			logger.SetOutput(io.MultiWriter(mem, f))
 			fmt.Fprintf(os.Stderr, "log: %s\n", p)
 		}
 	}
 	logger.Printf("data %s (portable %v)", dir, portable)
-	temp, err := appdir.Temp(dir)
-	if err != nil {
-		return err
+	temp := ""
+	if withTemp {
+		var err error
+		if temp, err = appdir.Temp(dir); err != nil {
+			return nil, err
+		}
 	}
-	defer clearTemp(temp)
 	comments.Version = version
 	library.SetHide(appdir.Hide)
 	folders := filepath.Join(dir, "folders.json")
-	if a.data == "" {
+	if data == "" {
 		for _, m := range importLegacy(dir, folders) {
 			logger.Print(m)
 		}
 	}
 	lib, err := library.Open(folders)
 	if err != nil {
-		return fmt.Errorf("library: %w (the file is kept; move it away to start a new library)", err)
+		return nil, fmt.Errorf("library: %w (the file is kept; move it away to start a new library)", err)
 	}
 	srv := player.New(lib, ui.FS(), player.OpenSettings(filepath.Join(dir, "settings.json")), filepath.Join(dir, "ui.json"), temp)
 	srv.Log = logger
@@ -142,11 +161,28 @@ func runApp(a appFlags, video, page string) error {
 	eng.Log = logger.Printf
 	logger.Printf("ai component folder %s", eng.Dir)
 	srv.SetAI(eng)
+	srv.ChangesPath = filepath.Join(dir, "changes.jsonl")
+	srv.Caps = newRegistry(func() (*player.Server, error) { return srv, nil })
+	return &appEnv{dir: dir, temp: temp, lib: lib, srv: srv, mem: mem, logger: logger}, nil
+}
+
+func runApp(a appFlags, video, page string) error {
+	if !ui.Built() {
+		return errors.New("page not built: run `npm --prefix web ci && npm --prefix web run build`, then rebuild")
+	}
+	env, err := openApp(a.data, a.debugLog, true)
+	if err != nil {
+		return err
+	}
+	defer clearTemp(env.temp)
+	lib, srv, logger, temp := env.lib, env.srv, env.logger, env.temp
 	base, err := srv.Start()
 	if err != nil {
 		return err
 	}
 	defer srv.Close()
+	// The command line finds this window here and hands its calls to it.
+	defer announce(env.dir, base)()
 
 	target := base + page
 	title := "Jusplay"

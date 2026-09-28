@@ -58,6 +58,18 @@ func (s *Server) analysisAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no comments", http.StatusNotFound)
 		return
 	}
+	body, err := s.analysis(sess)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+}
+
+// analysis is the report of sess's comments (made once, then cached in the
+// folder's records); sess must have comments.
+func (s *Server) analysis(sess *Session) ([]byte, error) {
 	a := sess.analysisOnce()
 	a.once.Do(func() {
 		sum := sha256.Sum256(sess.Comments.playback)
@@ -95,12 +107,7 @@ func (s *Server) analysisAPI(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	})
-	if a.err != nil {
-		http.Error(w, a.err.Error(), http.StatusUnprocessableEntity)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(a.body)
+	return a.body, a.err
 }
 
 func (sess *Session) analysisOnce() *analysis {

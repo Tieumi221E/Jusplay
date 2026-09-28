@@ -5,7 +5,7 @@
 // time slot of the timeline the order of the comments in it. It is the
 // reference for any change to the renderer: same input, same fingerprint.
 
-import type { V1Thread } from "./filter.ts";
+import type { V1Thread } from "./threads.ts";
 
 interface Instance {
   comments: { index: number; posY: number; vpos: number; loc: string; width: number; height: number; long: number; invisible: boolean; comment: unknown }[];

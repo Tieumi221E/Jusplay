@@ -17,8 +17,7 @@
 /* end of emoji faces */
 :root { --font: "Jus Sans", "Jus Emoji"; }
 
-/* Materials and shapes shared by both pages (docs/design-language.md §六,
-   §七). The theme is the material: day is ice glass, night is navy glass,
+/* Materials and shapes shared by both pages. The theme is the material: day is ice glass, night is navy glass,
    everywhere, over the picture too; only content (picture, comments,
    covers) keeps its own colours. Glass over the picture has no blur (it
    is redrawn with every video frame), so its opacity carries legibility:
@@ -79,7 +78,7 @@
   --r-xs: 2px;
 }
 
-/* Motion tokens shared by both pages (docs/design.md §二.2). Springs are
+/* Motion tokens shared by both pages. Springs are
    made by web/springs.py: SwiftUI-style duration/bounce, sampled into CSS
    linear(); each has the transition length it takes to settle (-t). */
 :root {

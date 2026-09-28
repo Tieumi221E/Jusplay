@@ -1,4 +1,4 @@
-// The player's episode layer (docs/design-language.md §五): as on tvOS, the
+// The player's episode layer: as on tvOS, the
 // bottom bar itself grows upward and shows the series' episodes in a row,
 // the current one lit and centred. The seek bar and buttons stay where they
 // are and keep working; the picture never moves.
@@ -113,6 +113,7 @@ export function episodeLayer(opts: {
   function card(e: Episode): HTMLLIElement {
     const li = document.createElement("li");
     const b = document.createElement("button");
+    b.dataset.cap = "player.open";
     b.className = "ep-card";
     b.dataset.id = e.id;
     const now = isNow(e);

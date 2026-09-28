@@ -4,8 +4,9 @@
 import type { Engine } from "./mse.ts";
 import type { Clock, Overlay } from "./overlay.ts";
 import type { Settings } from "./settings.ts";
-import type { FilterStats } from "./filter.ts";
+import type { FilterStats } from "./threads.ts";
 import { L, prefs, setPref } from "./i18n.ts";
+import { capCoverage } from "./coverage.ts";
 
 interface Ctx {
   video: HTMLVideoElement;
@@ -138,7 +139,8 @@ export async function selftest(c: Ctx): Promise<void> {
   const afterDown = await moving();
   await drag([1.0]);
   await sleep(1200);
-  document.getElementById("close-settings")!.click();
+  // Panels have no close button (4ae593e): Escape closes the top one, as for a person.
+  document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   v.pause();
   R.scaleDrag = { before: before4b, afterUp, afterDown, drawErrors: c.overlay.drawErrors, lastDrawError: c.overlay.lastDrawError, overlayError: c.overlay.error };
 
@@ -162,5 +164,10 @@ export async function selftest(c: Ctx): Promise<void> {
   if (c.overlay.error) errors.push(`overlay: ${c.overlay.error}`);
   const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
   R.jsHeapMB = mem ? Math.round(mem.usedJSHeapSize / 2 ** 20) : null;
+  // Every control names its capability (coverage.ts); any gap is an error.
+  const caps = await capCoverage();
+  R.caps = caps;
+  for (const m of caps.missing) errors.push(`control without a capability: ${m}`);
+  for (const u of caps.unknown) errors.push(`control names an unknown capability: ${u}`);
   await fetch("api/selftest", { method: "POST", body: JSON.stringify(R) });
 }

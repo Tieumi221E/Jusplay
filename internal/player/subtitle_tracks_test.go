@@ -9,6 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Tieumi221E/Jus/capreg"
 	"github.com/Tieumi221E/Jusplay/internal/library"
 )
 
@@ -36,6 +37,8 @@ func TestSubtitleEndpoints(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := New(lib, fstest.MapFS{}, OpenSettings(""), "", t.TempDir())
+	s.Caps = capreg.New("test", "0")
+	Register(s.Caps, func() (*Server, error) { return s, nil })
 	get := func(path string) (int, string) {
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, httptest.NewRequest("GET", "/"+s.token+"/"+path, nil))
@@ -43,8 +46,24 @@ func TestSubtitleEndpoints(t *testing.T) {
 	}
 	post := func(path, body string) (int, string) {
 		w := httptest.NewRecorder()
-		s.ServeHTTP(w, httptest.NewRequest("POST", "/"+s.token+"/"+path, strings.NewReader(body)))
+		r := httptest.NewRequest("POST", "/"+s.token+"/"+path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		s.ServeHTTP(w, r)
 		return w.Code, w.Body.String()
+	}
+	// subs.show, as the page calls it: the lines' texts, or the error status.
+	show := func(key string) (int, string) {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/"+s.token+"/api/cap/subs.show", strings.NewReader(`{"entry":"`+e.ID+`","track":`+strconvQuote(key)+`}`))
+		r.Header.Set("Content-Type", "application/json")
+		s.ServeHTTP(w, r)
+		var out struct{ Lines []struct{ Text string } }
+		json.Unmarshal(w.Body.Bytes(), &out)
+		var texts []string
+		for _, l := range out.Lines {
+			texts = append(texts, l.Text)
+		}
+		return w.Code, strings.Join(texts, "|")
 	}
 
 	code, body := get("api/subs/tracks?id=" + e.ID)
@@ -70,32 +89,33 @@ func TestSubtitleEndpoints(t *testing.T) {
 		t.Error("AI available without an engine")
 	}
 
-	// A file beside the video is served; nothing else, whatever the key says.
-	if code, body := get("api/subs/file?id=" + e.ID + "&key=file:S%20-%2001.chs.srt"); code != 200 || body != string(srt) {
-		t.Errorf("beside: %d %q", code, body)
+	// A file beside the video is read; nothing else, whatever the key says.
+	if code, lines := show("file:S - 01.chs.srt"); code != 200 || lines != "第一行字幕\n斜体|Second line & more" {
+		t.Errorf("beside: %d %q", code, lines)
 	}
-	for _, key := range []string{"file:secret.txt", "file:..%2Fsecret.txt", "file:" + strings.ReplaceAll(other, " ", "%20"), "manual"} {
-		if code, _ := get("api/subs/file?id=" + e.ID + "&key=" + key); code != 404 {
+	for _, key := range []string{"file:secret.txt", "file:../secret.txt", "file:" + other, "manual"} {
+		if code, _ := show(key); code != 404 {
 			t.Errorf("key %s: %d, want 404", key, code)
 		}
 	}
 
-	if code, body := get("api/subs/embedded?id=" + e.ID + "&track=" + jsonNum(tr.Embedded[1].Number)); code != 200 || !strings.Contains(body, `\N二行目`) || !strings.Contains(body, "[V4+ Styles]") {
-		t.Errorf("embedded: %d %s", code, body)
+	// The file's own ASS track, read as the page shows it.
+	if code, lines := show("mkv:" + jsonNum(tr.Embedded[1].Number)); code != 200 || !strings.Contains(lines, "\n二行目") {
+		t.Errorf("embedded: %d %q", code, lines)
 	}
 
 	// Picking: only subtitle files; the choice is kept with the video.
-	if code, _ := post("api/subs/pick", `{"id":"`+e.ID+`","pick":"manual","file":`+strconvQuote(filepath.Join(dir, "secret.txt"))+`}`); code != 422 {
+	if code, _ := post("api/cap/subs.pick", `{"entry":"`+e.ID+`","pick":"manual","file":`+strconvQuote(filepath.Join(dir, "secret.txt"))+`}`); code != 400 {
 		t.Errorf("picked a .txt: %d", code)
 	}
-	if code, body := post("api/subs/pick", `{"id":"`+e.ID+`","pick":"manual","pick2":"mkv:4","file":`+strconvQuote(other)+`}`); code != 204 {
+	if code, body := post("api/cap/subs.pick", `{"entry":"`+e.ID+`","pick":"manual","pick2":"mkv:4","file":`+strconvQuote(other)+`}`); code != 200 {
 		t.Fatalf("pick: %d %s", code, body)
 	}
 	if x, _ := lib.Get(e.ID); x.SubPick != "manual" || x.SubPick2 != "mkv:4" || x.SubFile != other {
 		t.Errorf("kept %q %q %q", x.SubPick, x.SubPick2, x.SubFile)
 	}
-	if code, body := get("api/subs/file?id=" + e.ID + "&key=manual"); code != 200 || body != string(ass) {
-		t.Errorf("manual: %d", code)
+	if code, lines := show("manual"); code != 200 || lines != "こんにちは\n二行目|上に出る行" {
+		t.Errorf("manual: %d %q", code, lines)
 	}
 }
 

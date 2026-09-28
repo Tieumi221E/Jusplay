@@ -39,3 +39,6 @@ bin/
 
 # Optional AI component (llama.cpp runtime and model files), not distributed with the source
 components/
+
+# Measurements (tools/bench.ps1): they name the hardware
+bench/

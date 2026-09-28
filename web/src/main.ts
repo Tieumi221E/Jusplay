@@ -1,6 +1,8 @@
 import { Engine, type MediaInfo } from "./mse.ts";
 import { Clock, Overlay, createRenderer } from "./overlay.ts";
-import { applyFilters, type V1Thread, type FilterStats } from "./filter.ts";
+import type { V1Thread, FilterStats } from "./threads.ts";
+import { cap, CapError } from "./cap.ts";
+import { capCoverage } from "./coverage.ts";
 import { merge, clamp, type Settings } from "./settings.ts";
 import { $, buildPanel, buildQuick, fmtTime, toast } from "./ui.ts";
 import { Layer, LayerStack } from "./layer.ts";
@@ -8,10 +10,11 @@ import { initTips } from "./tip.ts";
 import { watchInteractions } from "./perf.ts";
 import { SeekBar, bufferedAhead } from "./bar.ts";
 import { episodeLabel, seriesKey } from "./keys.ts";
-import { L, applyStatic, bindSwitches, onLang, onTheme, type StaticText } from "./i18n.ts";
+import { L, applyStatic, applyPrefs, bindSwitches, onLang, onTheme, type StaticText } from "./i18n.ts";
 import { ICONS } from "./icons.ts";
 import { episodeLayer, type Episode } from "./episodes.ts";
 import { onBack, setTitle, host, framed, BACK_KEYS } from "./nav.ts";
+import * as live from "./live.ts";
 import { Subtitles } from "./subs.ts";
 import { buildAiConfig } from "./aiconfig.ts";
 import { renderReport, type Report } from "./report.ts";
@@ -56,6 +59,7 @@ declare global {
     kpFullscreen?: (on: boolean) => Promise<void>;
     kpPickComments?: () => Promise<string>;
     kpPickSnapshotFolder?: () => Promise<string>;
+    kpPickNotebook?: () => Promise<string>;
   }
 }
 
@@ -80,6 +84,10 @@ const PLAYER_TEXT: StaticText[] = [
   ["#help-title", "textContent", "快捷键", "ショートカット"],
   ["#help-done", "textContent", "完成", "完了"],
   ["#open-report", "textContent", "弹幕报告", "コメントレポート"],
+  ["#copy-link", "textContent", "复制此刻的链接", "この場面のリンクをコピー"],
+  ["#add-note", "textContent", "记一笔", "メモする"],
+  ["#note-text", "placeholder", "这一刻…", "この場面について…"],
+  ["#note-save", "textContent", "记下", "記録"],
   ["#report-done", "textContent", "完成", "完了"],
   ["#source h3", "textContent", "弹幕", "コメント"],
   ["#source .lbl", "textContent", "来源", "読み込み元"],
@@ -119,7 +127,7 @@ watchInteractions("player");
 }
 
 // Centre feedback for playback actions: an icon and a short text, gone
-// again after a moment (docs/design.md §二.3).
+// again after a moment.
 let hudTimer = 0;
 function hud(icon: keyof typeof ICONS | null, text = ""): void {
   const h = $("#hud");
@@ -176,9 +184,13 @@ function clearError(): void {
   e.textContent = "";
 }
 
+/** Every error shown on this page (the selftests report them). */
+const errorsShown: string[] = [];
+
 function showError(msg: string): void {
   const e = $("#error");
   if (e.textContent?.split("\n").includes(msg)) return;
+  errorsShown.push(msg.split("\n")[0]);
   logToHost(`shown: ${msg}`);
   e.hidden = false;
   e.textContent = e.textContent ? `${e.textContent}\n${msg}` : msg;
@@ -237,6 +249,11 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     toast(L(`这条音轨（${what}）暂时无法播放，只播放画面`, `この音声トラック（${what}）は再生できないため、映像のみ再生します`), 6000);
   }
   const engine = new Engine(video, sess.media, sess.id);
+  // What the live session reports while this episode is open (live.ts).
+  const liveState = (): live.LiveState => ({
+    page: "player", id: sess.id, series: sess.series, title: sess.title,
+    position: video.currentTime, duration: sess.media.duration, paused: video.paused, rate: video.playbackRate,
+  });
   signal.addEventListener("abort", () => engine.destroy());
   // Resume where the last session stopped, unless that was the very start or
   // end. From the key frame before it when that is at most 10 s earlier: the
@@ -244,15 +261,24 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   // decoding up to a whole GOP (12 s on long-GOP releases) to reach the exact
   // point, and a few seconds of run-up help to pick the story up again.
   let resume = sess.position > 30 && sess.position < sess.media.duration - 30 ? sess.position : 0;
-  if (resume) {
+  const at = startAt;
+  startAt = null;
+  if (at !== null) resume = Math.min(Math.max(0, at), sess.media.duration); // asked for (player open -at): exactly there
+  else if (resume) {
     const k = sess.media.keyframes.filter((t) => t <= resume + 1e-6).pop();
     if (k !== undefined && resume - k <= 10) resume = k;
   }
   await engine.init(resume);
   if (signal.aborted) return;
   mark("sourceOpen");
+  // From here the live state is this episode's: the answer to the command
+  // that opened it (player open) must say so, not the previous episode.
+  live.setState(liveState);
+  opened?.();
+  opened = null;
   liftMorphOnFirstFrame(signal);
-  if (resume) toast(L(`从 ${fmtTime(resume)} 继续`, `${fmtTime(resume)} から再開`), 2500);
+  // "Resumed" only when it is where it was left, not a place asked for (player open -at).
+  if (resume && at === null) toast(L(`从 ${fmtTime(resume)} 继续`, `${fmtTime(resume)} から再開`), 2500);
   // Opening an episode means watching it (the selftests drive playback themselves).
   if (!new URLSearchParams(location.search).has("selftest")) video.play().catch(() => undefined);
 
@@ -270,8 +296,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   const legacy = s.videos[sess.key]?.offsetMs;
   if (sess.offsetMs == null && legacy != null) {
     sess.offsetMs = legacy;
-    fetch("api/offset", { method: "POST", body: JSON.stringify({ id: sess.id, offsetMs: legacy }) })
-      .then((r) => { if (r.ok) { delete s.videos[sess.key]; save(); } }).catch(() => undefined);
+    cap("comments.offset", { entry: sess.id, ms: legacy }).then(() => { delete s.videos[sess.key]; save(); }, () => undefined);
   }
   const offsetOf = () => sess.offsetMs ?? sess.comments.offsetMs;
   const clock = new Clock(video, signal);
@@ -293,6 +318,22 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     });
   };
   applyAnalysis();
+  // The comments shown are the window's to say (comments.filter, the same
+  // as `jusplay comments list`): asked again only when the filters change.
+  let filterKey = "";
+  let filterRes: { keep: number[][]; stats: FilterStats } | null = null;
+  const filtered = async (all: V1Thread[]): Promise<{ threads: V1Thread[]; stats: FilterStats }> => {
+    const settings = JSON.stringify({ filters: s.filters, comments: { forks: s.comments.forks, runScripts: s.comments.runScripts } });
+    if (settings !== filterKey || !filterRes) {
+      filterRes = await cap<{ keep: number[][]; stats: FilterStats }>("comments.filter", { entry: sess.id, settings }, signal);
+      filterKey = settings;
+    }
+    const keep = filterRes.keep;
+    return {
+      threads: all.flatMap((t, i) => (keep[i]?.length ? [{ ...t, comments: keep[i].map((j) => t.comments[j]) }] : [])),
+      stats: filterRes.stats,
+    };
+  };
   const rebuild = async () => {
     if (!threads) {
       await overlay.load(null, s.comments);
@@ -300,7 +341,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
       seekBar.setComments(null);
       return;
     }
-    const r = applyFilters(threads, s.filters, s.comments, sess.media.duration);
+    const r = await filtered(threads);
     stats = r.stats;
     panel.setStats(stats);
     sendShown(r.threads);
@@ -442,7 +483,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   const save = () => {
     clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => {
-      fetch("api/settings", { method: "PUT", body: JSON.stringify(s) }).catch((e) => showError(`${L("保存设置失败：", "設定の保存に失敗しました：")}${e}`));
+      cap("settings.set", { document: JSON.stringify(s) }).catch((e) => showError(`${L("保存设置失败：", "設定の保存に失敗しました：")}${e}`));
     }, 400);
   };
   let rebuildTimer = 0;
@@ -481,14 +522,18 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   const panel = buildPanel($("#panel-body"), s, onSettings);
   $("#panel-body section").append(ctStatus);
   renderCTStatus();
+  // The report button sits under its section, not in the foot. Held first:
+  // building the panel again (the next episode on this page) empties it.
+  const openReportBtn = $("#open-report");
   const quick = buildQuick($("#quick-body"), s, onSettings);
-  $("#quick-body").append($("#open-report")); // under its section, not in the foot
+  $("#quick-body").append(openReportBtn);
   const subCard = buildQuick($("#subcard-body"), s, onSettings, SUB_QUICK);
   // The subtitles section of the settings: loading a file; the AI lines:
   // how far they are made, by which models (machine-made text says so),
   // making the whole episode; and the AI backends.
   const subsBox = $("#panel-body [data-section=subs]");
   const pickSub = document.createElement("button");
+  pickSub.dataset.cap = "subs.pick";
   pickSub.className = "link";
   pickSub.onclick = async () => {
     const f = (window as unknown as { kpPickSubtitle?: () => Promise<string> }).kpPickSubtitle;
@@ -502,10 +547,12 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   const subsInfo = document.createElement("div");
   subsInfo.className = "stats";
   const makeAll = document.createElement("button");
+  makeAll.dataset.cap = "subs.generate";
   makeAll.className = "link";
   makeAll.onclick = () => ai.makeAll();
   const aiBox = document.createElement("div");
   aiBox.className = "ai-config";
+  aiBox.dataset.cap = "ai.config"; // its fields make the configuration that ai.config applies
   // Rows added by buildPanel come first: the track rows, size, AI toggle,
   // spoken and target language. Then these.
   subsBox.insertBefore(pickSub, subsBox.children[3] ?? null);
@@ -549,11 +596,11 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   void applyCT(); // translation left on last time
   signal.addEventListener("abort", () => {
     // Pending writes are done now, not dropped; timers go.
-    if (saveTimer) fetch("api/settings", { method: "PUT", body: JSON.stringify(s) }).catch(() => undefined);
+    if (saveTimer) cap("settings.set", { document: JSON.stringify(s) }).catch(() => undefined);
     for (const t of [saveTimer, rebuildTimer, scrubTimer, idle]) clearTimeout(t);
     if (offsetTimer) {
       clearTimeout(offsetTimer);
-      fetch("api/offset", { method: "POST", body: JSON.stringify({ id: sess.id, offsetMs: sess.offsetMs ?? null }) }).catch(() => undefined);
+      cap("comments.offset", sess.offsetMs == null ? { entry: sess.id } : { entry: sess.id, ms: sess.offsetMs }).catch(() => undefined);
     }
     saveProgress();
     // Panels and the episode layer close with their episode (choosing one is going there).
@@ -565,9 +612,10 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
   $("#auto-comments").hidden = sess.comments.source !== "manual";
   for (const p of sess.comments.problems ?? []) showError(`${L("未能使用：", "使用できませんでした：")}${p}`);
   const useSource = async (path: string) => {
-    const r = await fetch("api/comments/source", { method: "POST", body: JSON.stringify({ id: sess.id, path }) });
-    if (!r.ok) {
-      toast(`${L("无法加载：", "読み込めません：")}${(await r.text()).slice(0, 200)}`, 4000);
+    try {
+      await cap("comments.source", path ? { entry: sess.id, file: path } : { entry: sess.id });
+    } catch (e) {
+      toast(`${L("无法加载：", "読み込めません：")}${(e as Error).message.slice(0, 200)}`, 4000);
       return;
     }
     location.reload();
@@ -603,7 +651,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     updateMeta();
     clearTimeout(offsetTimer);
     offsetTimer = window.setTimeout(() => {
-      fetch("api/offset", { method: "POST", body: JSON.stringify({ id: sess.id, offsetMs: ms }) }).catch(() => undefined);
+      cap("comments.offset", { entry: sess.id, ms }).catch(() => undefined);
     }, 300);
   };
   offsetInput.value = String(offsetOf());
@@ -724,6 +772,22 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     video.playbackRate = s.playback.rate = Number(rate.value);
     save();
   };
+  // Settings changed elsewhere (settings.set from the command line or an
+  // agent): taken in and shown at once, controls included.
+  settingsChanged = async () => {
+    const fresh = merge(await cap<unknown>("settings.get", {}, signal));
+    Object.assign(s, fresh);
+    video.volume = s.playback.volume;
+    video.muted = s.playback.muted;
+    video.playbackRate = s.playback.rate;
+    vol.value = String(s.playback.volume);
+    rate.value = String(s.playback.rate);
+    volFill();
+    panel.refresh();
+    quick.refresh();
+    subCard.refresh();
+    onSettings();
+  };
   cbtn.onclick = () => {
     s.comments.enabled = !s.comments.enabled;
     panel.refresh();
@@ -837,6 +901,73 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     });
   };
   $("#open-report").onclick = () => void openReport();
+  // This moment as a link (link.make), ready to paste into a note.
+  const copyLink = async () => {
+    try {
+      const r = await cap<{ markdown: string }>("link.make", { entry: sess.id, at: video.currentTime }, signal);
+      await navigator.clipboard.writeText(r.markdown);
+      hud(null, L("已复制此刻的链接", "この場面のリンクをコピーしました"));
+    } catch (e) {
+      toast(`${L("无法复制链接：", "リンクをコピーできません：")}${(e as Error).message}`, 4000);
+    }
+  };
+  $("#copy-link").onclick = () => void copyLink();
+  // 记一笔 (note.add): a line about this moment into the Jusnote notebook
+  // chosen once. The moment is the one when it was opened, not after typing.
+  const noteBox = $("#note-box");
+  const noteText = $<HTMLInputElement>("#note-text");
+  let noteAt = 0;
+  const noteWhere = () => {
+    const nb = s.notes.notebook;
+    $("#note-where").textContent = nb ? `${nb.split(/[\\/]/).filter(Boolean).pop()} / ${s.notes.file}` : L("选择笔记本…", "ノートブックを選ぶ…");
+  };
+  const pickNotebook = async (): Promise<boolean> => {
+    if (!host.kpPickNotebook) return false;
+    const folder = await host.kpPickNotebook();
+    if (!folder) return false;
+    s.notes.notebook = folder;
+    save();
+    noteWhere();
+    return true;
+  };
+  const closeNote = () => {
+    noteBox.classList.remove("open");
+    noteBox.hidden = true;
+  };
+  const openNote = async () => {
+    noteAt = video.currentTime;
+    if (!s.notes.notebook && !(await pickNotebook())) return;
+    noteText.value = "";
+    noteWhere();
+    noteBox.hidden = false;
+    noteBox.classList.add("open");
+    noteText.focus();
+  };
+  const saveNote = async () => {
+    const text = noteText.value.trim();
+    if (!text) return closeNote();
+    try {
+      const r = await cap<{ file: string }>("note.add", { entry: sess.id, at: noteAt, text }, signal);
+      closeNote();
+      hud(null, L("已记到 ", "記録しました：") + r.file);
+    } catch (e) {
+      const missing = e instanceof CapError && e.kind === "notfound" && /Jusnote/.test(e.message);
+      toast(missing ? L("未安装 Jusnote", "Jusnote がインストールされていません") : `${L("记不下：", "記録できません：")}${(e as Error).message}`, 4000);
+    }
+  };
+  $("#add-note").onclick = () => void openNote();
+  $("#note-where").onclick = () => void pickNotebook();
+  $("#note-save").onclick = () => void saveNote();
+  noteText.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing) {
+      e.preventDefault();
+      void saveNote();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeNote();
+    }
+  }, { signal });
   $("#report-done").onclick = () => reportLayer.hide();
   $<HTMLButtonElement>("#open-report").disabled = sess.comments.source === "none";
   const renderHelp = () => {
@@ -846,7 +977,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
       [", .", "暂停时逐帧", "一時停止中にコマ送り"], ["[ ]", "倍速", "再生速度"], ["M", "静音", "ミュート"],
       ["C", "弹幕开关", "コメント表示"], ["T", "字幕开关", "字幕表示"], ["- =", "弹幕偏移 ±100 ms", "コメントのずれ ±100 ms"], ["S", "设置", "設定"],
       ["F / " + L("双击", "ダブルクリック"), "全屏", "全画面"], ["N P", "下一集 / 上一集", "次の話 / 前の話"],
-      ["E", "剧集", "エピソード"], [BACK_KEYS, "返回媒体库", "ライブラリに戻る"], ["?", "快捷键", "ショートカット"], ["Esc", "关闭 / 退出全屏", "閉じる / 全画面を終了"],
+      ["E", "剧集", "エピソード"], ["L", "复制此刻的链接", "この場面のリンクをコピー"], ["J", "记一笔（写进 Jusnote）", "メモする（Jusnote に記録）"], [BACK_KEYS, "返回媒体库", "ライブラリに戻る"], ["?", "快捷键", "ショートカット"], ["Esc", "关闭 / 退出全屏", "閉じる / 全画面を終了"],
     ];
     $("#help-list").replaceChildren(...keys.flatMap(([k, zh, ja]) => {
       const dt = document.createElement("dt"), dd = document.createElement("dd");
@@ -948,6 +1079,44 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     if (next) void episodes.upNext(next, 5, () => go(next));
   }, { signal });
 
+  // ---- the live session (live.ts): what is shown, and commands ----
+  for (const ev of ["play", "pause", "seeked", "ratechange", "loadeddata"]) video.addEventListener(ev, live.report, { signal });
+  live.setState(liveState);
+  control = {
+    state: liveState,
+    async command(c) {
+      switch (c.cmd) {
+        case "subs-all": {
+          // As "make the whole episode" in the settings: wait until it is done.
+          if (!ai.available) throw new Error(L("AI 字幕组件不可用", "AI 字幕コンポーネントが使えません"));
+          ai.makeAll();
+          for (;;) {
+            const st = ai.state;
+            if (st.kind === "done") return { covered: st.covered, duration: st.duration };
+            if (st.kind === "error") throw new Error(st.message);
+            if (st.kind === "unavailable") throw new Error(st.reason || "AI subtitles unavailable");
+            if (signal.aborted) throw new Error("the episode was closed");
+            await new Promise((r) => setTimeout(r, 500));
+          }
+        }
+        case "seek": {
+          const to = c.to ?? video.currentTime + (c.by ?? 0);
+          const seeked = new Promise((r) => video.addEventListener("seeked", r, { once: true, signal }));
+          video.currentTime = Math.min(Math.max(0, to), sess.media.duration);
+          await Promise.race([seeked, new Promise((r) => setTimeout(r, 3000))]);
+          hud(null, fmtTime(video.currentTime));
+          break;
+        }
+        case "pause": video.pause(); break;
+        case "fullscreen": await setFullscreen(c.on ?? !fullscreen); break;
+        case "play": await video.play(); break;
+        case "back": leave(); break;
+        default: throw new Error(`not a player command: ${c.cmd}`);
+      }
+      wake();
+    },
+  };
+
   // ---- keyboard ----
   const frame = 1 / (eval_fps(sess.media.frameRate) || 24);
   document.addEventListener("keydown", (e) => {
@@ -987,6 +1156,8 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
       case "t": toggleSubs(); break;
       case "s": toggleQuick(); break;
       case "e": if (hasSiblings) episodes.toggle(); break;
+      case "l": $("#copy-link").click(); break;
+      case "j": e.preventDefault(); $("#add-note").click(); break;
       case "?": toggleHelp(); break;
       case "f": setFullscreen(!fullscreen); break;
       case "Escape": if (!layers.closeTop() && fullscreen) setFullscreen(false); break;
@@ -1053,7 +1224,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     const before = keyHandled;
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "m", bubbles: true }));
     await new Promise((r) => setTimeout(r, 100));
-    await fetch("api/selftest", { method: "POST", body: JSON.stringify({ hops, keyHandlers: keyHandled - before, title: document.title }) });
+    await fetch("api/selftest", { method: "POST", body: JSON.stringify({ hops, keyHandlers: keyHandled - before, title: document.title, errors: errorsShown }) });
     return;
   }
   if (q.has("selftest") && q.has("dock")) {
@@ -1208,7 +1379,7 @@ async function main(entryId: string, signal: AbortSignal): Promise<void> {
     // the check seeds, and running alongside it shifted the first run.
     await firstBuilt;
     const { layoutCheck } = await import("./layoutcheck.ts");
-    const f = threads ? applyFilters(threads, s.filters, s.comments, sess.media.duration).threads : null;
+    const f = threads ? (await filtered(threads)).threads : null;
     const report = await layoutCheck(f, async (cv, th) => {
       const nc = createRenderer(cv, th, s.comments, true);
       await nc.build();
@@ -1309,19 +1480,56 @@ function eval_fps(r: string): number {
 }
 
 let current: AbortController | null = null;
+/** The playing episode's side of the live session (set by main). */
+let control: { command(c: live.Command): Promise<unknown>; state(): live.LiveState } | null = null;
+/** Where the next opened episode starts (player open -at), instead of where it was left. */
+let startAt: number | null = null;
+/** Called once the opened episode's media is ready. */
+let opened: (() => void) | null = null;
+/** Takes in settings changed elsewhere (set by main for the open episode). */
+let settingsChanged: (() => Promise<void>) | null = null;
+
+/** Another program changed settings or choices (events.watch). */
+function onLiveEvent(ev: live.LiveEvent): void {
+  if (ev.kind !== "changed" || ev.source?.via === "window") return;
+  const c = ev.data?.cap;
+  if (c === "settings.set") void settingsChanged?.();
+  if (c === "prefs.set") void cap<Record<string, string>>("prefs.get").then((p) => applyPrefs(p));
+}
 /** Key presses the player's handler saw (the switch selftest: one press, one count). */
 let keyHandled = 0;
 
-/** Open an episode on this page, replacing the one playing. */
-async function open(id: string): Promise<void> {
+/**
+ * Open an episode on this page, replacing the one playing. The promise is
+ * settled once its media is ready (or it failed); the rest of the page
+ * keeps coming up after that.
+ */
+function open(id: string, at?: number): Promise<void> {
   current?.abort();
+  control = null;
+  settingsChanged = null;
   const ac = new AbortController();
   current = ac;
-  try {
-    await main(id, ac.signal);
-  } catch (e) {
-    if (!ac.signal.aborted) showError(`${L("启动失败：", "起動に失敗しました：")}${(e as Error)?.stack ?? e}`);
+  startAt = at ?? null;
+  return new Promise<void>((ready, fail) => {
+    opened = ready;
+    main(id, ac.signal).catch((e) => {
+      if (!ac.signal.aborted) showError(`${L("启动失败：", "起動に失敗しました：")}${(e as Error)?.stack ?? e}`);
+      fail(e);
+    });
+  });
+}
+
+/** A command from the live session, carried out by this page. */
+async function command(c: live.Command): Promise<unknown> {
+  if (c.cmd === "open") {
+    if (!c.entry) throw new Error("open: no entry");
+    host.kpFront?.().catch(() => undefined);
+    history.replaceState(null, "", `index.html?id=${encodeURIComponent(c.entry)}`);
+    return open(c.entry, c.at);
   }
+  if (!control) throw new Error("no video is playing");
+  return control.command(c);
 }
 
 /**
@@ -1330,7 +1538,7 @@ async function open(id: string): Promise<void> {
  * lifts at the new episode's first frame. The address follows (a reload
  * reopens this episode).
  */
-async function switchTo(id: string, thumb?: string): Promise<void> {
+async function switchTo(id: string, thumb?: string, at?: number): Promise<void> {
   const morph = $<HTMLImageElement>("#morph");
   if (thumb) {
     morph.src = thumb;
@@ -1341,16 +1549,21 @@ async function switchTo(id: string, thumb?: string): Promise<void> {
     await new Promise((r) => setTimeout(r, 140));
   }
   history.replaceState(null, "", `index.html?id=${encodeURIComponent(id)}`);
-  await open(id);
+  await open(id, at).catch(() => undefined);
 }
 
-if (firstId) void open(firstId);
+if (firstId) void open(firstId).catch(() => undefined);
+// On its own (jusplay play), this page is the window's top page: it takes
+// the commands. Framed, the library does and hands them over (below).
+if (!framed) live.listen(command, onLiveEvent);
+// For checking by hand or by a driver (web/perf/drive.mjs eval=…).
+(window as unknown as { jusCapCoverage: () => Promise<unknown> }).jusCapCoverage = () => capCoverage();
 
 // Framed in the library: it opens and closes episodes; nothing is shown
 // until the first one.
 if (framed) {
   (window as unknown as { jusplay: unknown }).jusplay = {
-    async open(id: string, thumb?: string) {
+    async open(id: string, thumb?: string, at?: number) {
       const morph = $<HTMLImageElement>("#morph");
       if (thumb) {
         morph.src = thumb;
@@ -1358,11 +1571,15 @@ if (framed) {
         morph.hidden = false;
       }
       history.replaceState(null, "", `index.html?id=${encodeURIComponent(id)}`);
-      await open(id);
+      await open(id, at);
     },
+    command,
+    state: () => control?.state() ?? null,
+    event: onLiveEvent,
     close() {
       current?.abort();
       current = null;
+      control = null;
       video.pause();
       video.removeAttribute("src");
       video.load(); // lets the decoder go

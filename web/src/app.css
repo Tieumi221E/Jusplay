@@ -1,7 +1,7 @@
 /* Player. Controls float over the picture as translucent "glass" without
    backdrop-filter: blurring what is behind them has to be redone for every
    video frame, and measured +27 % of a core and +230 MB while visible over
-   playback (docs/architecture.md). Hidden, they are also visibility:hidden. */
+   playback. Hidden, they are also visibility:hidden. */
 /* The player's own colours; the glass is shared (tokens.css). The letterbox
    follows the theme; the picture does not. */
 :root {
@@ -30,7 +30,7 @@
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 13px/1.45 var(--font); overflow: hidden; user-select: none;
   -webkit-font-smoothing: antialiased; }
 button, select, input, textarea { font: inherit; color: inherit; }
-/* Every control: hover 8 %, press 12 % and a small spring back (docs/design.md §二.3).
+/* Every control: hover 8 %, press 12 % and a small spring back.
    Only colour and transform change: nothing re-lays out. */
 button { background: transparent; border: 0; padding: 5px 10px; border-radius: var(--r-sm); cursor: pointer;
   transition: background-color var(--t-fast) linear, color var(--t-fast) linear, opacity var(--t-fast) linear, transform var(--spring-snappy-t) var(--spring-snappy); }
@@ -208,7 +208,12 @@ input[type=range].fill:active::-webkit-slider-thumb { transform: scale(1.25); }
 /* Cards over busy comments and the picture: nearly opaque (text-heavy
    panels are regular glass, and without a blur over video that means
    opaque), so text behind does not show through; the shortcut sheet also dims the picture (HIG: 35 %). */
-#quick, #subcard, #panel, #help { background: var(--glass-panel); }
+#quick, #subcard, #panel, #help, #note-box { background: var(--glass-panel); }
+/* 记一笔: one line about this moment, over the controls. */
+#note-box { position: fixed; left: 50%; bottom: 112px; width: min(520px, calc(100vw - 32px)); transform: translateX(-50%); padding: 12px 14px 6px; border-radius: var(--r-lg); z-index: 6; }
+#note-box input { width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: var(--r-sm, 8px); border: 1px solid var(--line, rgba(128,128,128,.35)); background: transparent; color: inherit; font: inherit; }
+#note-box .note-foot { display: flex; align-items: center; margin-top: 4px; }
+#note-box .grow { flex: 1; }
 #help { box-shadow: var(--shadow), 0 0 0 100vmax rgba(0, 0, 0, .35); }
 /* The closed positions below are id rules, which outrank .layer.open. */
 #quick.open, #subcard.open, #panel.open { transform: none; }
@@ -248,7 +253,7 @@ input[type=range].fill:active::-webkit-slider-thumb { transform: scale(1.25); }
 #help-list { display: grid; grid-template-columns: auto 1fr; gap: 9px 18px; margin: 4px 0 0; align-items: center; }
 #help-list dt { display: flex; gap: 4px; justify-content: flex-end; }
 #help-list dd { margin: 0; color: var(--muted); }
-/* Panels carry no close button (docs/design-language.md §四): popovers and
+/* Panels carry no close button: popovers and
    layers close from their trigger, Esc or a press outside; only a centred
    dialog ends with a button. */
 .dialog-foot { display: flex; justify-content: flex-end; margin-top: 16px; }

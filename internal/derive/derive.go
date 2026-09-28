@@ -1,7 +1,7 @@
 // Package derive turns a verified snapshot into the V1 threads array that
 // niconicomments reads, plus a report of everything the derivation saw.
 //
-// Rules (docs/architecture.md, "派生与同一性"):
+// Rules (derivation and identity):
 //   - identity is (threadId, fork, comment.id); without id it falls back to
 //     (threadId, fork, no, postedAt, vposMs, body) and is counted as low
 //     confidence;

@@ -1,12 +1,12 @@
 package player
 
 import (
-	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/Tieumi221E/Jusplay/internal/comments"
@@ -44,124 +44,97 @@ func (s *Server) ScanAsync() {
 	}
 	go func() {
 		defer s.scanning.Store(false)
-		st, err := s.lib.Scan()
-		if err != nil {
-			s.logf("scan: %v", err)
-		}
-		s.logf("scan: %d folders, %d files, %d added, %d changed, %d missing in %s",
-			st.Folders, st.Files, st.Added, st.Changed, st.Missing, st.Took.Round(time.Millisecond))
-		for _, r := range st.Recovered {
-			s.logf("scan: interrupted replacement put right: %s", r)
-		}
-		s.mu.Lock()
-		s.lastScan = &st
-		s.mu.Unlock()
-		if n := s.thumbs.prune(s.lib.Entries()); n > 0 {
-			s.logf("thumbnails: removed %d stale", n)
-		}
-		if n := s.pruneIndex(); n > 0 {
-			s.logf("media index: removed %d stale", n)
-		}
+		s.scan()
 	}()
 }
 
-func (s *Server) libraryAPI(w http.ResponseWriter, r *http.Request, p string) {
-	decode := func(v any) bool {
-		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(v); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return false
-		}
-		return true
+// ScanNow scans and returns what it found; a scan already running is
+// waited for first.
+func (s *Server) ScanNow() (library.ScanStats, error) {
+	for !s.scanning.CompareAndSwap(false, true) {
+		time.Sleep(50 * time.Millisecond)
 	}
+	defer s.scanning.Store(false)
+	return s.scan()
+}
+
+// scan runs one scan; callers hold the scanning flag.
+func (s *Server) scan() (library.ScanStats, error) {
+	st, err := s.lib.Scan()
+	if err != nil {
+		s.logf("scan: %v", err)
+	}
+	s.logf("scan: %d folders, %d files, %d added, %d changed, %d missing in %s",
+		st.Folders, st.Files, st.Added, st.Changed, st.Missing, st.Took.Round(time.Millisecond))
+	for _, r := range st.Recovered {
+		s.logf("scan: interrupted replacement put right: %s", r)
+	}
+	s.mu.Lock()
+	s.lastScan = &st
+	s.mu.Unlock()
+	if n := s.thumbs.prune(s.lib.Entries()); n > 0 {
+		s.logf("thumbnails: removed %d stale", n)
+	}
+	if n := s.pruneIndex(); n > 0 {
+		s.logf("media index: removed %d stale", n)
+	}
+	return st, err
+}
+
+// LibraryState is the library as the library page sees it.
+func (s *Server) LibraryState() libraryState {
+	st := libraryState{Folders: s.lib.FolderInfos(), Scanning: s.scanning.Load(), Now: time.Now()}
+	done, total := s.lib.Progress()
+	st.Progress = [2]int64{done, total}
+	s.mu.Lock()
+	st.LastScan = s.lastScan
+	s.mu.Unlock()
+	all := s.lib.Entries()
+	primaryOf, others := library.Versions(all)
+	for _, e := range all {
+		st.Entries = append(st.Entries, LibraryEntry{Entry: e, SameName: !e.Missing && comments.SameName(e.Path) != "",
+			AltOf: primaryOf[e.ID], Versions: others[e.ID], Thumb: !e.Missing && s.thumbs.has(e)})
+	}
+	if st.Entries == nil {
+		st.Entries = []LibraryEntry{}
+	}
+	return st
+}
+
+// Embed puts the same-name .json's comments into the MKV (in place,
+// verified; the comments it replaces are kept in the folder's records).
+func (s *Server) Embed(id string) (map[string]any, error) {
+	e, ok := s.lib.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("no such entry")
+	}
+	s.forget(id) // no stream may hold the file while it is replaced
+	root := e.Folder
+	if root == "" {
+		root = filepath.Dir(e.Path)
+	}
+	res, err := embed.Embed(e.Path, "", embed.Options{BackupDir: filepath.Join(root, library.VaultDir, "backup")})
+	if err != nil {
+		return nil, err
+	}
+	if st, err := os.Stat(e.Path); err == nil {
+		n := res.Comments
+		s.lib.Update(id, func(x *library.Entry) {
+			x.Size, x.ModTime, x.CommentCount = st.Size(), st.ModTime(), &n
+			if x.Probe != nil {
+				x.Probe.Attached = true
+			}
+		})
+	}
+	s.logf("embed %s: %d comments, %d packets verified in %s; backup %q; recovered %q", e.Path, res.Comments, res.Verification.Packets, res.Took, res.Backup, res.Recovered)
+	return map[string]any{"comments": res.Comments, "replaced": res.Replaced, "tookMs": res.Took.Milliseconds()}, nil
+}
+
+func (s *Server) libraryAPI(w http.ResponseWriter, r *http.Request, p string) {
 	switch {
 	case p == "api/library" && r.Method == http.MethodGet:
-		st := libraryState{Folders: s.lib.FolderInfos(), Scanning: s.scanning.Load(), Now: time.Now()}
-		done, total := s.lib.Progress()
-		st.Progress = [2]int64{done, total}
-		s.mu.Lock()
-		st.LastScan = s.lastScan
-		s.mu.Unlock()
-		all := s.lib.Entries()
-		primaryOf, others := library.Versions(all)
-		for _, e := range all {
-			st.Entries = append(st.Entries, LibraryEntry{Entry: e, SameName: !e.Missing && comments.SameName(e.Path) != "",
-				AltOf: primaryOf[e.ID], Versions: others[e.ID], Thumb: !e.Missing && s.thumbs.has(e)})
-		}
-		if st.Entries == nil {
-			st.Entries = []LibraryEntry{}
-		}
-		writeJSON(w, st)
-	case p == "api/library/folders" && r.Method == http.MethodPost:
-		var req struct {
-			Path   string
-			Remove bool
-		}
-		if !decode(&req) {
-			return
-		}
-		var err error
-		if req.Remove {
-			err = s.lib.RemoveFolder(req.Path)
-		} else {
-			err = s.lib.AddFolder(req.Path)
-		}
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-			return
-		}
-		if !req.Remove {
-			s.ScanAsync()
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case p == "api/library/scan" && r.Method == http.MethodPost:
-		s.ScanAsync()
-		w.WriteHeader(http.StatusAccepted)
-	case p == "api/library/watched" && r.Method == http.MethodPost:
-		var req struct {
-			ID      string
-			Watched bool
-		}
-		if !decode(&req) {
-			return
-		}
-		if err := s.lib.Update(req.ID, func(e *library.Entry) { e.Watched = req.Watched; e.Position = 0 }); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case p == "api/library/embed" && r.Method == http.MethodPost:
-		// Embed the same-name .json into the MKV (in place, verified).
-		var req struct{ ID string }
-		if !decode(&req) {
-			return
-		}
-		e, ok := s.lib.Get(req.ID)
-		if !ok {
-			http.Error(w, "no such entry", http.StatusNotFound)
-			return
-		}
-		s.forget(req.ID) // no stream may hold the file while it is replaced
-		// Comments being replaced are kept in the folder's records.
-		root := e.Folder
-		if root == "" {
-			root = filepath.Dir(e.Path)
-		}
-		res, err := embed.Embed(e.Path, "", embed.Options{BackupDir: filepath.Join(root, library.VaultDir, "backup")})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-			return
-		}
-		if st, err := os.Stat(e.Path); err == nil {
-			n := res.Comments
-			s.lib.Update(req.ID, func(x *library.Entry) {
-				x.Size, x.ModTime, x.CommentCount = st.Size(), st.ModTime(), &n
-				if x.Probe != nil {
-					x.Probe.Attached = true
-				}
-			})
-		}
-		s.logf("embed %s: %d comments, %d packets verified in %s; backup %q; recovered %q", e.Path, res.Comments, res.Verification.Packets, res.Took, res.Backup, res.Recovered)
-		writeJSON(w, map[string]any{"comments": res.Comments, "replaced": res.Replaced, "tookMs": res.Took.Milliseconds()})
+		s.lib.Refresh()
+		writeJSON(w, s.LibraryState())
 	case p == "api/thumb" && r.Method == http.MethodGet:
 		// Made by the page (thumbnailer.ts); a missing one is its to make.
 		e, ok := s.lib.Get(r.URL.Query().Get("id"))

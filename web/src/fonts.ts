@@ -2,12 +2,11 @@
 // subset of Source Han Sans 2.005), in every comment style, with Jus Emoji
 // (Noto Color Emoji) for the emoji it has none of. The site draws with the
 // Windows fonts; they are not open, so they are not used, and comment art
-// can differ from it by the fonts' widths (docs/architecture.md, comment
-// fonts). The comment canvas is Japanese (lang), so Han characters take
+// can differ from it by the fonts' widths. The comment canvas is Japanese (lang), so Han characters take
 // their Japanese forms whatever the interface language.
 
 import NiconiComments from "./nico/niconicomments.js";
-import type { V1Thread } from "./filter.ts";
+import type { V1Thread } from "./threads.ts";
 
 const FONT = `"Jus Sans", "Jus Emoji"`;
 

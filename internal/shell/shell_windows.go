@@ -104,12 +104,43 @@ func Open(title, url string, dark bool, profile string) (*Window, error) {
 		w.Destroy()
 		return nil, err
 	}
+	// To the front (a video opened from Explorer while the window was open:
+	// the second process allowed it, AllowForeground).
+	if err := w.Bind("kpFront", func() error {
+		w.Dispatch(win.front)
+		return nil
+	}); err != nil {
+		w.Destroy()
+		return nil, err
+	}
 	if err := win.bindDialogs(); err != nil {
 		w.Destroy()
 		return nil, err
 	}
 	w.Navigate(url)
 	return win, nil
+}
+
+var (
+	procIsIconic                 = user32.NewProc("IsIconic")
+	procShowWindow               = user32.NewProc("ShowWindow")
+	procSetForegroundWindow      = user32.NewProc("SetForegroundWindow")
+	procAllowSetForegroundWindow = user32.NewProc("AllowSetForegroundWindow")
+)
+
+func (win *Window) front() {
+	const swRestore = 9
+	if r, _, _ := procIsIconic.Call(win.hwnd); r != 0 {
+		procShowWindow.Call(win.hwnd, swRestore)
+	}
+	procSetForegroundWindow.Call(win.hwnd)
+}
+
+// AllowForeground lets process pid bring its window to the front. A
+// process started by the user (a video opened from Explorer) may; the
+// already running window may not on its own.
+func AllowForeground(pid int) {
+	procAllowSetForegroundWindow.Call(uintptr(pid))
 }
 
 // appIcon and nightIcon are the icon groups in the executable's resources

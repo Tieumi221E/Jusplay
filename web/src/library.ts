@@ -2,13 +2,16 @@
 // Text from the disk (names, paths) only ever goes through textContent.
 
 import { episodeLabel, seriesKey } from "./keys.ts";
-import { L, applyStatic, bindSwitches, onLang, prefs, setPref, type StaticText } from "./i18n.ts";
+import { L, applyStatic, applyPrefs, bindSwitches, onLang, prefs, setPref, type StaticText } from "./i18n.ts";
 import { Layer, LayerStack } from "./layer.ts";
 import { initTips } from "./tip.ts";
 import { watchInteractions } from "./perf.ts";
 import { onBack, setTitle, BACK_KEYS } from "./nav.ts";
 import { makeThumb } from "./thumbnailer.ts";
 import { playerHost } from "./playerhost.ts";
+import * as live from "./live.ts";
+import { cap, CapError } from "./cap.ts";
+import { capCoverage } from "./coverage.ts";
 
 interface Probe {
   duration: number;
@@ -53,7 +56,7 @@ interface State {
   entries: Entry[];
   scanning: boolean;
   progress: [number, number];
-  lastScan: { Files: number; Added: number; Changed: number; Missing: number } | null;
+  lastScan: { files: number; added: number; changed: number; missing: number } | null;
 }
 
 interface Series {
@@ -96,7 +99,9 @@ function toast(msg: string, ms = 2600): void {
   toastTimer = window.setTimeout(() => t.classList.remove("show"), ms);
 }
 
-const post = (url: string, body: unknown) => fetch(url, { method: "POST", body: JSON.stringify(body) });
+/** A capability of the window, its error (if any) as text: the library's changes go the way the command line's do. */
+const call = <T = unknown>(id: string, params: Record<string, unknown>): Promise<{ ok: true; value: T } | { ok: false; error: string }> =>
+  cap<T>(id, params).then((value) => ({ ok: true as const, value }), (e: Error) => ({ ok: false as const, error: e.message }));
 
 function fmtClock(s: number): string {
   s = Math.max(0, Math.floor(s));
@@ -153,7 +158,7 @@ const io = new IntersectionObserver((items) => {
 
 const thumbURL = (e: Entry) => `api/thumb?id=${e.id}&v=${e.size}-${Date.parse(e.modTime)}`;
 
-// ---- motion: page and view transitions (docs/design.md §二.3) ----------------
+// ---- motion: page and view transitions ----------------------------------------
 
 const reduced = matchMedia("(prefers-reduced-motion: reduce)");
 
@@ -165,7 +170,7 @@ const reduced = matchMedia("(prefers-reduced-motion: reduce)");
 function play(e: Entry, from?: Element | null): void {
   const t = from?.querySelector<HTMLElement>(".thumb") ?? (from as HTMLElement | null);
   sessionStorage.setItem("jus-home-scroll", String(scrollY));
-  player.open(e.id, thumbURL(e), t);
+  void player.open(e.id, thumbURL(e), t).catch(() => undefined);
 }
 
 // The player, over the library (playerhost.ts). Back zooms into the card of
@@ -184,9 +189,55 @@ const player = playerHost({
     return s ? visible(s) : null;
   },
   onClosed: (id) => {
+    live.report();
     setTitle("Jusplay");
     void refresh(true).then(() => view.querySelector<HTMLElement>(`[data-id="${id}"]`)?.focus({ preventScroll: true }));
   },
+});
+// The live session (live.ts): this is the window's top page, so it takes
+// the commands and hands the player's to it; changes made elsewhere (the
+// command line, an agent) show at once.
+// For checking by hand or by a driver: this page and the player framed in it.
+(window as unknown as { jusCapCoverage: () => Promise<unknown> }).jusCapCoverage = () => {
+  const f = document.querySelector<HTMLIFrameElement>("#player-frame")?.contentDocument;
+  return capCoverage(f ? [document, f] : [document]);
+};
+live.setState(() => (player.playing ? player.state() ?? { page: "player" } : { page: "library" }));
+let refreshSoon = 0;
+live.listen(async (c) => {
+  if (c.cmd === "thumbs") {
+    // Made here as the library makes them, one at a time; not while a
+    // video is up (its decoder comes first, thumbnailer.ts).
+    if (player.playing) throw new Error("a video is open in the window; thumbnails are made while the library shows (player back first)");
+    const failed: string[] = [];
+    let made = 0;
+    for (const id of c.ids ?? []) (await makeThumb(id)) ? made++ : failed.push(id);
+    void refresh(true);
+    return { made, failed };
+  }
+  if (c.cmd === "subs-all") {
+    // The player makes them for the episode it has open.
+    if (!c.entry) throw new Error("subs-all: no entry");
+    if (player.state()?.id !== c.entry) {
+      const e = byId.get(c.entry);
+      await player.open(c.entry, e?.thumb ? thumbURL(e) : undefined, null);
+    }
+    return player.command(c);
+  }
+  if (c.cmd !== "open") return player.command(c);
+  if (!c.entry) throw new Error("open: no entry");
+  window.kpFront?.().catch(() => undefined);
+  await refresh(true);
+  const e = byId.get(c.entry);
+  if (e) setTitle(e.series || e.title);
+  await player.open(c.entry, e?.thumb ? thumbURL(e) : undefined, null, c.at);
+}, (ev) => {
+  player.event(ev); // the player takes in settings changed elsewhere
+  if (ev.kind !== "changed" || ev.source?.via === "window") return;
+  if (ev.data?.cap === "prefs.set") void cap<Record<string, string>>("prefs.get").then((p) => applyPrefs(p));
+  if (player.playing) return;
+  clearTimeout(refreshSoon);
+  refreshSoon = window.setTimeout(() => void refresh(true), 150);
 });
 const visible = (el: HTMLElement) => {
   const r = el.getBoundingClientRect();
@@ -314,7 +365,7 @@ function renderHome(): void {
     view.append(h("div", { class: "empty-state" },
       h("div", { class: "big", text: L("把动画文件夹加进来", "アニメのフォルダーを追加しましょう") }),
       h("p", { text: L("按系列整理并记住进度，不会移动或修改文件。", "シリーズごとに整理して続きを覚えます。ファイルは変更しません。") }),
-      Object.assign(h("button", { class: "primary", text: L("添加文件夹", "フォルダーを追加") }), { onclick: addFolder })));
+      Object.assign(h("button", { class: "primary", "data-cap": "library.add", text: L("添加文件夹", "フォルダーを追加") }), { onclick: addFolder })));
     return;
   }
   const q = search.trim().toLowerCase();
@@ -342,7 +393,7 @@ function renderHome(): void {
         : a.name.localeCompare(b.name, "ja"));
   const seg = h("span", { class: "seg", role: "group", "aria-label": L("排序", "並べ替え") });
   for (const [k, label] of [["name", L("名称", "名前")], ["recent", L("最近播放", "最近再生")], ["added", L("最近添加", "最近追加")]]) {
-    const b = h("button", { "aria-pressed": String(order === k), text: label });
+    const b = h("button", { "aria-pressed": String(order === k), "data-cap": "prefs.set", text: label });
     b.onclick = () => {
       setPref("sort", k);
       renderHome();
@@ -389,7 +440,7 @@ function warmOnHover(el: HTMLElement, id: string): void {
 }
 
 function episodeCard(e: Entry, title: string, meta: string, progress: number): HTMLElement {
-  const a = h("div", { class: "card", role: "link", tabindex: "0", title: e.path, "data-id": e.id },
+  const a = h("div", { class: "card", role: "link", tabindex: "0", title: e.path, "data-id": e.id, "data-cap": "player.open" },
     thumb(e, { progress, play: true }),
     h("div", { class: "title", text: title }),
     h("div", { class: "meta", text: meta }));
@@ -409,15 +460,15 @@ function homeHero(e: Entry): HTMLElement {
   const left = d ? Math.max(1, Math.round((d - e.position) / 60)) : 0;
   const bd = h("div", { class: "backdrop" });
   backdrop(bd, e);
-  const cover = h("div", { class: "cover", role: "link", tabindex: "0", "data-id": e.id, "aria-label": `${e.series} ${epName(e)}` },
+  const cover = h("div", { class: "cover", role: "link", tabindex: "0", "data-id": e.id, "data-cap": "player.open", "aria-label": `${e.series} ${epName(e)}` },
     thumb(e, { progress: d ? e.position / d : 0, play: true }));
   const go = () => play(e, cover);
   cover.onclick = go;
   cover.onkeydown = (ev) => { if (ev.key === "Enter") go(); };
   warmOnHover(cover, e.id);
-  const primary = Object.assign(h("button", { class: "primary", text: L(`▶ 继续播放 ${epName(e)}`, `▶ ${epName(e)} を続きから`) }), { onclick: go });
+  const primary = Object.assign(h("button", { class: "primary", "data-cap": "player.open", text: L(`▶ 继续播放 ${epName(e)}`, `▶ ${epName(e)} を続きから`) }), { onclick: go });
   warmOnHover(primary, e.id);
-  const series = Object.assign(h("button", { text: L("全部剧集", "エピソード一覧") }), {
+  const series = Object.assign(h("button", { "data-cap": "ui", text: L("全部剧集", "エピソード一覧") }), {
     onclick: () => (location.hash = `#/s/${encodeURIComponent(seriesKey(e.folder, e.series))}`),
   });
   return h("section", { class: "hero home" }, bd,
@@ -435,7 +486,7 @@ function seriesCard(s: Series): HTMLElement {
   const meta = h("div", { class: "meta" }, episodes(live.length));
   if (watched) meta.append(h("span", { class: "dot" }), watched === live.length ? L("已看完", "視聴済み") : watchedN(watched));
   if (withComments) meta.append(h("span", { class: "chip on", title: L(`${withComments} 集有弹幕`, `${withComments} 話にコメントあり`), text: L("弹幕", "コメント") }));
-  const a = h("div", { class: "card", role: "link", tabindex: "0", title: s.folder, "data-key": s.key },
+  const a = h("div", { class: "card", role: "link", tabindex: "0", title: s.folder, "data-key": s.key, "data-cap": "ui" },
     thumb(live[0] ?? next, { watched: watched === live.length && live.length > 0 }),
     h("div", { class: "title", text: s.name }), meta);
   a.onclick = () => {
@@ -474,11 +525,11 @@ function renderSeries(s: Series): void {
     const resumeLabel = next.position > 0 && !next.watched
       ? L(`继续播放 ${epName(next)}（${fmtClock(next.position)}）`, `${epName(next)} の続きから（${fmtClock(next.position)}）`)
       : L(`播放 ${epName(next)}`, `${epName(next)} を再生`);
-    const playBtn = h("button", { class: "primary", text: `▶ ${resumeLabel}` });
+    const playBtn = h("button", { class: "primary", "data-cap": "player.open", text: `▶ ${resumeLabel}` });
     playBtn.onclick = () => startEp(next);
     actions.append(playBtn);
     if (live[0] && live[0] !== next) {
-      const first = h("button", { text: L("从头开始", "最初から") });
+      const first = h("button", { "data-cap": "player.open", text: L("从头开始", "最初から") });
       first.onclick = () => startEp(live[0]);
       actions.append(first);
     }
@@ -518,8 +569,8 @@ function episodeRow(e: Entry): HTMLElement {
   if (e.missing) m.replaceChildren(L("文件不见了", "ファイルが見つかりません"));
   else if (e.probe?.error) m.replaceChildren(h("span", { class: "chip bad", title: e.probe.error, text: L("无法读取", "読み込めません") }));
   const chips = h("div", { class: "chips" }, commentChip(e));
-  const more = h("button", { class: "more", title: L("更多", "その他"), "aria-haspopup": "true", "aria-expanded": "false", text: "⋯" });
-  const row = h("div", { class: `ep${e.watched ? " watched" : ""}${e.missing ? " missing" : ""}`, role: "listitem", tabindex: e.missing ? undefined : "0", title: e.path, "data-id": e.id },
+  const more = h("button", { class: "more", "data-cap": "ui", title: L("更多", "その他"), "aria-haspopup": "true", "aria-expanded": "false", text: "⋯" });
+  const row = h("div", { class: `ep${e.watched ? " watched" : ""}${e.missing ? " missing" : ""}`, role: "listitem", tabindex: e.missing ? undefined : "0", title: e.path, "data-id": e.id, "data-cap": "player.open" },
     thumb(e, { progress: d && !e.watched ? e.position / d : 0, watched: e.watched, play: !e.missing }),
     h("div", { class: "num", text: e.episode != null ? String(e.episode) : "·" }),
     h("div", { class: "name" }, h("div", { class: "t", text: e.subtitle || epName(e) }), m),
@@ -550,8 +601,8 @@ function closeMenu(): void {
 
 function openMenu(anchor: HTMLElement, e: Entry, x?: number, y?: number): void {
   const menu = $("#menu");
-  const item = (label: string, fn: () => void, disabled = false) => {
-    const b = h("button", { role: "menuitem", text: label, disabled });
+  const item = (label: string, fn: () => void, disabled = false, cap = "ui") => {
+    const b = h("button", { role: "menuitem", text: label, disabled, "data-cap": cap });
     b.onclick = () => {
       closeMenu();
       fn();
@@ -561,23 +612,23 @@ function openMenu(anchor: HTMLElement, e: Entry, x?: number, y?: number): void {
   const isMkv = /\.mkv$/i.test(e.path);
   menu.replaceChildren(
     item(e.watched ? L("标为未看", "未視聴にする") : L("标为已看", "視聴済みにする"), async () => {
-      await post("api/library/watched", { id: e.id, watched: !e.watched });
+      await call("entry.watched", { entry: e.id, watched: !e.watched });
       refresh(true);
-    }),
+    }, false, "entry.watched"),
     h("hr"),
-    item(e.probe?.attached ? L("用同名 JSON 更新已打包的弹幕", "同名の JSON で格納済みのコメントを更新") : L("把同名 JSON 打包进 MKV", "同名の JSON を MKV に格納"), () => embed(e), !(e.sameName && isMkv)),
-    item(L("选择弹幕文件…", "コメントファイルを選択…"), () => pickComments(e), !window.kpPickComments),
+    item(e.probe?.attached ? L("用同名 JSON 更新已打包的弹幕", "同名の JSON で格納済みのコメントを更新") : L("把同名 JSON 打包进 MKV", "同名の JSON を MKV に格納"), () => embed(e), !(e.sameName && isMkv), "comments.embed"),
+    item(L("选择弹幕文件…", "コメントファイルを選択…"), () => pickComments(e), !window.kpPickComments, "comments.source"),
     item(L("恢复自动选择弹幕", "コメントの自動選択に戻す"), async () => {
-      await post("api/comments/source", { id: e.id, path: "" });
+      await call("comments.source", { entry: e.id });
       refresh(true);
-    }, !e.comments),
+    }, !e.comments, "comments.source"),
     h("hr"),
     item(L("在资源管理器中显示", "エクスプローラーで表示"), () => window.kpReveal?.(e.path), !window.kpReveal || e.missing),
   );
   const alts = (e.versions ?? []).map((id) => byId.get(id)).filter((x): x is Entry => !!x && !x.missing);
   if (alts.length) {
     menu.append(h("hr"), h("div", { class: "menu-label", text: L("其他版本", "ほかのバージョン") }),
-      ...alts.map((a) => item(`${a.path.split(/[\\/]/).slice(-2).join("\\")}${a.probe?.attached ? L(" · 有弹幕", " · コメントあり") : ""}`, () => play(a))));
+      ...alts.map((a) => item(`${a.path.split(/[\\/]/).slice(-2).join("\\")}${a.probe?.attached ? L(" · 有弹幕", " · コメントあり") : ""}`, () => play(a), false, "player.open")));
   }
   if (menuLayer.isOpen && menuLayer.trigger !== anchor) menuLayer.hide();
   menu.hidden = false;
@@ -601,10 +652,11 @@ async function embed(e: Entry): Promise<void> {
     `${epName(e)} 已有弹幕，用同名 JSON 替换吗？\n\n原弹幕会先备份到 .jusplay\\backup。`,
     `${epName(e)} にはコメントがあります。同名の JSON で置き換えますか？\n\n今のコメントは .jusplay\\backup に保存されます。`))) return;
   toast(L(`正在打包 ${epName(e)}…`, `${epName(e)} を格納中…`), 60000);
-  const r = await post("api/library/embed", { id: e.id });
-  if (!r.ok) toast(`${L("打包失败：", "格納に失敗しました：")}${(await r.text()).slice(0, 200)}`, 5000);
+  // Asked above (or nothing to replace): the capability's own confirmation is given.
+  const r = await call<{ comments: number; tookMs: number }>("comments.embed", { entry: e.id, yes: true });
+  if (!r.ok) toast(`${L("打包失败：", "格納に失敗しました：")}${r.error.slice(0, 200)}`, 5000);
   else {
-    const j = await r.json();
+    const j = r.value;
     const n = j.comments.toLocaleString(), sec = (j.tookMs / 1000).toFixed(1);
     toast(L(`已打包 ${n} 条弹幕（${sec} 秒）`, `コメント ${n} 件を格納しました（${sec} 秒）`));
   }
@@ -614,16 +666,47 @@ async function embed(e: Entry): Promise<void> {
 async function pickComments(e: Entry): Promise<void> {
   const path = await window.kpPickComments?.();
   if (!path) return;
-  const r = await post("api/comments/source", { id: e.id, path });
-  toast(r.ok ? L("已关联弹幕文件", "コメントファイルを関連付けました") : `${L("无法使用：", "使用できません：")}${(await r.text()).slice(0, 200)}`, r.ok ? 2600 : 5000);
+  const r = await call("comments.source", { entry: e.id, file: path });
+  toast(r.ok ? L("已关联弹幕文件", "コメントファイルを関連付けました") : `${L("无法使用：", "使用できません：")}${r.error.slice(0, 200)}`, r.ok ? 2600 : 5000);
   refresh(true);
 }
 
 // ---- folders ------------------------------------------------------------------
 
 function togglePop(open = !popLayer.isOpen): void {
-  if (open) renderFolders();
+  if (open) {
+    renderFolders();
+    // The folders' own tools (skills list), shown under their folder.
+    void cap<FolderSkill[]>("skills.list").then((list) => {
+      folderSkills = list.filter((k) => k.run && !k.problem);
+      if (popLayer.isOpen) renderFolders();
+    }, () => undefined);
+  }
   popLayer.toggle(open);
+}
+
+type FolderSkill = { name: string; description?: string; folder: string; run?: string[]; problem?: string; out: string };
+let folderSkills: FolderSkill[] = [];
+
+/** Runs a folder's skill; a new or changed one shows its command and asks first. */
+async function runSkill(k: FolderSkill): Promise<void> {
+  type Result = { exit: number; files: string[]; out: string };
+  let r: Result;
+  try {
+    r = await cap<Result>("skills.run", { name: k.name, folder: k.folder });
+  } catch (e) {
+    if (!(e instanceof CapError) || e.kind !== "confirm") return toast(`${L("技能失败：", "スキル失敗：")}${(e as Error).message}`, 5000);
+    const plan = e.plan as { command: string[] };
+    if (!confirm(L(`运行这个程序？技能随文件夹而来，改动后会再问。\n\n${plan.command.join(" ")}`,
+      `このプログラムを実行しますか？スキルはフォルダーに付属し、変更されたら再確認します。\n\n${plan.command.join(" ")}`))) return;
+    try {
+      r = await cap<Result>("skills.run", { name: k.name, folder: k.folder, yes: true });
+    } catch (e2) {
+      return toast(`${L("技能失败：", "スキル失敗：")}${(e2 as Error).message}`, 5000);
+    }
+  }
+  toast(`${L("完成：", "完了：")}${k.name} · ${r.files.length} ${L("个文件", "ファイル")}`);
+  if (r.files.length) window.kpReveal?.(r.out);
 }
 
 function renderFolders(): void {
@@ -632,11 +715,11 @@ function renderFolders(): void {
   if (!state.folders.length) ul.append(h("li", { class: "empty", text: L("还没有文件夹", "フォルダーがありません") }));
   for (const { path: f, error } of state.folders) {
     const n = state.entries.filter((e) => e.folder === f && !e.missing).length;
-    const rm = h("button", { title: L("从媒体库移除（不删除文件）", "ライブラリから外す（ファイルは削除しません）"), text: L("移除", "外す") });
+    const rm = h("button", { "data-cap": "library.remove", title: L("从媒体库移除（不删除文件）", "ライブラリから外す（ファイルは削除しません）"), text: L("移除", "外す") });
     rm.onclick = async () => {
       if (!confirm(L(`从媒体库移除这个文件夹？\n${f}\n\n文件不会被删除，重新添加即可恢复记录。`,
         `このフォルダーをライブラリから外しますか？\n${f}\n\nファイルは削除されず、追加し直すと記録も戻ります。`))) return;
-      await post("api/library/folders", { path: f, remove: true });
+      await call("library.remove", { folder: f });
       await refresh(true);
       renderFolders();
     };
@@ -644,6 +727,11 @@ function renderFolders(): void {
     // kept for this run only; say so rather than lose them silently.
     const warn = error ? h("div", { class: "folder-warn", title: error, text: L("记录无法写入这个文件夹，只保留到关闭为止", "このフォルダーに記録を書き込めないため、閉じるまでしか残りません") }) : null;
     ul.append(h("li", {}, h("span", { class: "path", title: f, text: f }), h("span", { class: "count", text: `${n}` }), rm, warn));
+    for (const k of folderSkills.filter((k) => k.folder === f)) {
+      const b = h("button", { "data-cap": "skills.run", title: k.description ?? "", text: L("运行 ", "実行 ") + k.name });
+      b.onclick = () => void runSkill(k);
+      ul.append(h("li", { class: "skill" }, h("span", { class: "path", text: L("技能", "スキル") }), b));
+    }
   }
 }
 
@@ -651,8 +739,8 @@ async function addFolder(): Promise<void> {
   if (!window.kpPickFolder) return toast(L("这个窗口不能打开文件夹对话框", "このウィンドウではフォルダー選択ダイアログを開けません"));
   const path = await window.kpPickFolder();
   if (!path) return;
-  const r = await post("api/library/folders", { path });
-  if (!r.ok) return toast(`${L("无法添加：", "追加できません：")}${await r.text()}`, 4000);
+  const r = await call("library.add", { folder: path, wait: false });
+  if (!r.ok) return toast(`${L("无法添加：", "追加できません：")}${r.error}`, 4000);
   toast(L("已添加，正在扫描…", "追加しました。スキャンしています…"));
   togglePop(false);
   refresh(true);
@@ -677,7 +765,7 @@ onLang(() => {
 $("#folders-btn").onclick = () => togglePop();
 $("#add-folder").onclick = addFolder;
 $("#rescan").onclick = async () => {
-  await post("api/library/scan", {});
+  await call("library.scan", { wait: false });
   setTimeout(() => refresh(), 300);
 };
 const input = $<HTMLInputElement>("#search");

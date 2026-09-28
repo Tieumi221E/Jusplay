@@ -27,9 +27,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Tieumi221E/Jus/capreg"
 	"github.com/Tieumi221E/Jusplay/internal/bundle"
 	"github.com/Tieumi221E/Jusplay/internal/comments"
 	"github.com/Tieumi221E/Jusplay/internal/derive"
+	"github.com/Tieumi221E/Jusplay/internal/filter"
 	"github.com/Tieumi221E/Jusplay/internal/library"
 	"github.com/Tieumi221E/Jusplay/internal/media"
 	"github.com/Tieumi221E/Jusplay/internal/mkv"
@@ -79,9 +81,11 @@ type Session struct {
 	Prev string `json:"prev,omitempty"`
 	Next string `json:"next,omitempty"`
 
-	mu       sync.Mutex
-	cancels  map[string]context.CancelFunc // one live stream per track
-	analysis *analysis                     // the comment analysis, made on request
+	mu         sync.Mutex
+	cancels    map[string]context.CancelFunc // one live stream per track
+	analysis   *analysis                     // the comment analysis, made on request
+	threads    []filter.Thread               // the comment data as filtering reads it (threadsOf)
+	threadsErr error
 }
 
 // LoadComments finds comment data for video, in this order:
@@ -221,6 +225,16 @@ type Server struct {
 
 	ai subsState
 
+	// Caps is the registry of what the window can do (Register); it is
+	// served at api/cap for the pages and for the command line.
+	Caps *capreg.Registry
+
+	live live // what the pages show, and who listens (live.go)
+
+	// ChangesPath is the app's change log (changes.go); "" keeps it in memory.
+	ChangesPath string
+	changes     changeLog
+
 	ctMu sync.Mutex
 	ct   *ctJob // the comment translation running, if any
 }
@@ -343,6 +357,7 @@ func (s *Server) Start() (string, error) {
 }
 
 func (s *Server) Close() error {
+	s.flushPending()
 	s.stopCT()
 	s.closeAI()
 	s.mu.Lock()
@@ -485,10 +500,17 @@ func (s *Server) episodes(w http.ResponseWriter, id string) {
 		http.NotFound(w, nil)
 		return
 	}
-	out := struct {
-		Series   string    `json:"series"`
-		Episodes []Episode `json:"episodes"`
-	}{Series: e.Series, Episodes: []Episode{}}
+	writeJSON(w, s.EpisodeList(e))
+}
+
+// EpisodeList is e's series, one row per episode (api/episodes).
+type EpisodeList struct {
+	Series   string    `json:"series"`
+	Episodes []Episode `json:"episodes"`
+}
+
+func (s *Server) EpisodeList(e library.Entry) EpisodeList {
+	out := EpisodeList{Series: e.Series, Episodes: []Episode{}}
 	same, versions, _ := s.sameSeries(e)
 	for _, x := range same {
 		ep := Episode{ID: x.ID, Season: x.Season, Episode: x.Episode, Title: x.Title, Subtitle: x.Subtitle,
@@ -499,7 +521,7 @@ func (s *Server) episodes(w http.ResponseWriter, id string) {
 		}
 		out.Episodes = append(out.Episodes, ep)
 	}
-	writeJSON(w, out)
+	return out
 }
 
 func (s *Server) neighbours(e library.Entry) (prev, next string) {
@@ -564,6 +586,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.subsAPI(w, r, p)
 		return
 	}
+	if (p == "api/cap" || strings.HasPrefix(p, "api/cap/")) && s.Caps != nil {
+		r2 := r.Clone(r.Context())
+		r2.URL.Path = "/" + p
+		s.Caps.ServeHTTP(w, r2)
+		return
+	}
 	q := r.URL.Query()
 	switch {
 	case p == "api/session" && r.Method == http.MethodGet:
@@ -587,30 +615,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(sess.Comments.playback)
-	case p == "api/comments/source" && r.Method == http.MethodPost:
-		// {"id", "path"} loads a comment file for the video; "" returns to
-		// the automatic order. The choice is remembered in the library.
-		var req struct{ ID, Path string }
-		if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		e, ok := s.lib.Get(req.ID)
-		if !ok {
-			http.Error(w, "no such entry", http.StatusNotFound)
-			return
-		}
-		c := LoadComments(e.Path, req.Path)
-		if req.Path != "" && c.Source != "manual" {
-			http.Error(w, c.Error, http.StatusUnprocessableEntity)
-			return
-		}
-		if err := s.lib.Update(req.ID, func(e *library.Entry) { e.Comments = req.Path }); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		s.forget(req.ID) // reopened with the new source on the next request
-		writeJSON(w, c)
+	case p == "api/state" && r.Method == http.MethodPost:
+		s.stateAPI(w, r)
 	case p == "api/progress" && r.Method == http.MethodPost:
 		var req struct {
 			ID       string
@@ -622,13 +628,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		now := time.Now()
-		err := s.lib.Update(req.ID, func(e *library.Entry) {
-			e.Position, e.LastPlayed = req.Position, &now
-			// Within the last 5 % (credits) counts as watched.
-			if req.Duration > 0 && req.Position >= req.Duration*0.95 {
-				e.Watched, e.Position = true, 0
-			}
-		})
+		err := s.lib.Update(req.ID, func(e *library.Entry) { setProgress(e, req.Position, req.Duration, now) })
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
@@ -637,18 +637,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case p == "prefs.js" && r.Method == http.MethodGet:
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Write(s.prefs.get().script())
-	case p == "api/prefs" && r.Method == http.MethodPut:
-		b, err := io.ReadAll(io.LimitReader(r.Body, 4096))
-		var pr Prefs
-		if err == nil {
-			pr, err = s.prefs.update(b)
-		}
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(pr)
 	case p == "api/settings" && r.Method == http.MethodGet:
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(s.settings.Get())
@@ -665,31 +653,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case p == "api/log" && r.Method == http.MethodGet && s.LogText != nil:
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		io.WriteString(w, s.LogText())
-	case p == "api/offset" && r.Method == http.MethodPost:
-		// The comment offset chosen for a file, kept in its folder's records
-		// (null: back to the one the comment data records).
-		var req struct {
-			ID       string
-			OffsetMs *int64
-		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if req.OffsetMs != nil && (*req.OffsetMs < -600000 || *req.OffsetMs > 600000) {
-			http.Error(w, "offset out of range", http.StatusBadRequest)
-			return
-		}
-		if err := s.lib.Update(req.ID, func(e *library.Entry) { e.OffsetMs = req.OffsetMs }); err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		s.mu.Lock()
-		if sess := s.sessions[req.ID]; sess != nil {
-			sess.OffsetMs = req.OffsetMs
-		}
-		s.mu.Unlock()
-		w.WriteHeader(http.StatusNoContent)
 	case p == "api/log" && r.Method == http.MethodPost:
 		// Page-side errors, so a crash of the page leaves evidence.
 		b, _ := io.ReadAll(io.LimitReader(r.Body, 16<<10))

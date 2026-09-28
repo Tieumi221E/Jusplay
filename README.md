@@ -10,13 +10,16 @@ A small, fast, offline-by-default anime player for Windows that renders Niconico
 - **字幕**：外挂字幕（SRT、ASS、VTT）与 MKV 内嵌字幕，可同时显示两条（如译文 + 原文）；没有字幕的视频可以用 AI 从声音生成字幕并翻译（可选，见下文）。
 - **媒体库**：自动识别系列、季和集数；记住每一集的进度；首页直接从上次看到的地方继续。
 - **流畅**：播放中切集不重新加载页面；剧集列表从播放条上长出来；界面动画按 120 Hz 调校。
+- **命令行与 AI agent**：界面能做的，命令行都能做（`jusplay help -json` 列出全部）；窗口开着时，命令交给窗口执行、当场可见；agent 做的改动记着是谁做的，可以按会话撤回。
+- **和其他 Jus 应用连在一起**：`jus://play/…` 链接指向某一集的某一刻，挪动文件夹后仍然有效；按 `J`「记一笔」把这一刻连同一句话写进 Jusnote 的笔记。
+- **文件夹自带的技能**：媒体文件夹里的 `.jusplay/skills/` 可以放脚本，在媒体库的文件夹列表里运行，第一次运行和改动之后都会先给你看命令。
 - **隐私**：默认完全离线，不联网、不上传任何东西；只有你主动下载 AI 模型，或自己填写在线接口时才会联网。每个媒体文件夹的记录保存在它自己隐藏的 `.jusplay` 文件夹里；程序的设置放在 exe 旁边；日志只在内存里。
 
-版本：**0.3.0**（新增弹幕分析、弹幕报告与弹幕翻译）。
+版本：**0.4.0**（命令行与界面完全一致，记一笔，文件夹技能）。
 
 ## 下载与运行
 
-1. 从 Releases 下载 `Jusplay-0.3.0-windows-x64.zip`，解压到任意文件夹。
+1. 从 Releases 下载 `Jusplay-0.4.0-windows-x64.zip`，解压到任意文件夹。
 2. 双击 `jusplay.exe` 打开媒体库，点右上角的文件夹按钮添加你的动画文件夹。
    也可以把一个视频文件直接拖到 `jusplay.exe` 上播放。
 
@@ -108,10 +111,35 @@ exe 没有代码签名，第一次运行时 Windows SmartScreen 可能提示“�
 | S | 设置 |
 | F / 双击 | 全屏 |
 | N P | 下一集 / 上一集 |
+| L | 复制此刻的链接 |
+| J | 记一笔（写进 Jusnote） |
 | E | 剧集列表 |
 | Alt ← / Backspace | 返回媒体库 |
 | ? | 全部快捷键 |
 | Esc | 关闭 / 退出全屏 |
+
+## 命令行
+
+同一个 exe 也是命令行工具，和窗口用的是同一套能力。每个命令都接受 `-json`；失败时 `-json` 下在 stderr 输出 `{"error", "kind", "code"}`；退出码固定：0 成功、1 失败、2 用法错误（或需要 `-yes` 确认）、3 冲突（数据在你读取之后被改过）。
+
+```text
+jusplay help [-json]                       全部命令与参数
+jusplay library list | add <文件夹> | scan    媒体库
+jusplay entry info <视频> | progress get <视频> | progress set <视频> -position <秒>
+jusplay player open <视频> [-at 1:23] | player seek -to <秒> | player status   （在窗口里）
+jusplay events watch                        窗口里发生的事，一行一个 JSON
+jusplay comments list <视频> [-from -to] | comments offset <视频> -ms <n> | comments embed <视频> -yes
+jusplay subs show <视频> | subs pick <视频> -pick …
+jusplay link make <视频> [-at 1:23] | link info <jus://play/…>
+jusplay note add -text "…" [-entry <视频> -at <秒>] [-notebook <Jusnote 笔记本>]   记一笔
+jusplay skills list | skills run <名> [-folder <文件夹>] [-yes]
+jusplay snapshot import-xml | import-zouryou | validate | derive | pack      弹幕快照工具
+jusplay mkv embed <视频> [弹幕文件] | attach | verify | extract               MKV 里的弹幕
+jusplay changes list [-session <id>] | changes revert -session <id> [-yes]
+jusplay agents [-write <文件夹>] | manifest | version
+```
+
+视频可以是路径、`library list` 里的 id，或 `jus://play/…` 链接。说明是谁在调用：`-author human|agent -harness <名> -model <提供方/模型> -run <会话 id>`（也可以用环境变量 `JUS_AUTHOR` 等）；这些信息记进变更日志，`changes revert -session` 能只撤回某一次会话的改动。0.3.0 之前的写法（`embed`、`import-xml`、`verify` 等）仍然可用。
 
 ## 数据放在哪里
 
@@ -122,9 +150,11 @@ exe 没有代码签名，第一次运行时 Windows SmartScreen 可能提示“�
 | 字幕选择、AI 字幕、弹幕分析与译文 | 那个文件夹里隐藏的 `.jusplay\`（`subtitles\`、`analysis\`、`translations\`） |
 | AI 设置 | exe 旁边的 `jusplay-data\ai.json`（API Key 加密保存） |
 | 下载的 AI 模型与运行时 | exe 旁边的 `components\ai\`（不可写时放在 `jusplay-data` 里） |
+| 文件夹自带的技能及其输出 | 那个文件夹里隐藏的 `.jusplay\skills\`、`.jusplay\out\`；确认过的技能记在 `jusplay-data\skills.json` |
+| 记一笔写到哪里 | 设置里记着一个 Jusnote 笔记本和一篇笔记（默认 `Jusplay.md`）；笔记本身在 Jusnote 的笔记本里 |
 | 日志 | 只在内存里；需要时在设置 →「信息」里复制 |
 
-删除 `jusplay-data`、`components` 和各文件夹里的 `.jusplay` 就会清除 Jusplay 留下的全部痕迹。
+`jusplay manifest` 列出 Jusplay 在这台电脑上写过的每一处。卸载用 Jus 的 `jus uninstall jusplay`：先列出要删的（程序、`jusplay-data`、AI 组件、各文件夹里的缩略图与索引），加 `-yes` 才删；进度、弹幕选择、变更日志是你的，只列出、不删。
 
 ## 从源码构建
 
@@ -135,7 +165,6 @@ npm --prefix web ci
 ./build.ps1            # 生成 bin\jusplay.exe
 go test ./...          # 测试不依赖任何外部程序
 ```
-
 
 ## 许可证
 

@@ -1,4 +1,4 @@
-// Overlays that come and go (docs/design.md §二.3). A layer is shown by
+// Overlays that come and go. A layer is shown by
 // adding .open and hidden by removing it; the CSS transition runs both ways
 // and reverses from wherever it is when interrupted. After the exit, the
 // element leaves the render tree (hidden), so a closed layer costs nothing.

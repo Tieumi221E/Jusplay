@@ -8,6 +8,7 @@
 // Keys go to the app and stay there (encrypted for the Windows user); the
 // page only learns that one is set.
 
+import { cap } from "./cap.ts";
 import { L } from "./i18n.ts";
 import { toast } from "./ui.ts";
 
@@ -61,6 +62,12 @@ declare global {
 
 const gb = (n: number) => `${(n / 1e9).toFixed(n >= 1e10 ? 0 : 1)} GB`;
 
+/** e, marked with the capability it uses (Jus contract 17). */
+function capped<T extends HTMLElement>(cap: string, e: T): T {
+  e.dataset.cap = cap;
+  return e;
+}
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Partial<HTMLElementTagNameMap[K]> & { class?: string } = {}, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
   const { class: cls, ...rest } = props;
@@ -94,7 +101,7 @@ export function buildAiConfig(root: HTMLElement, changed: () => void, signal: Ab
     if (draft.asr.kind === "local" || draft.mt.kind === "local") {
       root.append(pathRow(L("llama-server", "llama-server"), draft.server, `${draft.dir}\\llama\\llama-server.exe`, (v) => (draft!.server = v), window.kpPickProgram));
     }
-    const apply = el("button", { class: "link" }, L("应用", "適用"));
+    const apply = capped("ai.config", el("button", { class: "link" }, L("应用", "適用")));
     apply.onclick = save;
     root.append(el("div", { class: "row actions" }, apply));
   };
@@ -103,8 +110,8 @@ export function buildAiConfig(root: HTMLElement, changed: () => void, signal: Ab
     const box = el("div", { class: "stats" });
     if (d.running) {
       const pct = d.total ? Math.floor((d.done / d.total) * 100) : 0;
-      const cancel = el("button", { class: "link" }, L("取消", "キャンセル"));
-      cancel.onclick = () => fetch("api/ai/download/cancel", { method: "POST" }).then(load);
+      const cancel = capped("ai.cancel", el("button", { class: "link" }, L("取消", "キャンセル")));
+      cancel.onclick = () => cap("ai.cancel").then(load, load);
       box.append(el("div", {}, `${L("正在下载推荐模型", "推奨モデルをダウンロード中")} ${pct}%（${gb(d.done)} / ${gb(d.total)}）${d.file}`), cancel);
       return box;
     }
@@ -112,8 +119,9 @@ export function buildAiConfig(root: HTMLElement, changed: () => void, signal: Ab
       box.append(el("div", {}, L("推荐模型已下载", "推奨モデルはダウンロード済み")));
       return box;
     }
-    const go = el("button", { class: "link" }, `${L("下载推荐模型", "推奨モデルをダウンロード")}（${gb(d.bytes)}）`);
-    go.onclick = () => fetch("api/ai/download", { method: "POST" }).then(load);
+    const go = capped("ai.download", el("button", { class: "link" }, `${L("下载推荐模型", "推奨モデルをダウンロード")}（${gb(d.bytes)}）`));
+    // The button is the person's go-ahead for going online (ai.download asks for it).
+    go.onclick = () => cap("ai.download", { yes: true }).then(load, (e: Error) => (toast(e.message.slice(0, 200), 5000), load()));
     box.append(
       el("div", {}, L("推荐模型未下载，将保存到：", "推奨モデルは未ダウンロード。保存先：")),
       el("div", { class: "path" }, info!.config.dir),
@@ -188,9 +196,10 @@ export function buildAiConfig(root: HTMLElement, changed: () => void, signal: Ab
   };
 
   async function save(): Promise<void> {
-    const r = await fetch("api/ai/config", { method: "PUT", body: JSON.stringify(draft) });
-    if (!r.ok) {
-      toast(`${L("无法应用：", "適用できません：")}${(await r.text()).slice(0, 200)}`, 5000);
+    try {
+      await cap("ai.config", { config: JSON.stringify(draft) });
+    } catch (e) {
+      toast(`${L("无法应用：", "適用できません：")}${(e as Error).message.slice(0, 200)}`, 5000);
       return;
     }
     toast(L("AI 设置已应用", "AI 設定を適用しました"));

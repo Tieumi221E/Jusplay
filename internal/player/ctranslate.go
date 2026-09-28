@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Tieumi221E/Jus/capreg"
 	"github.com/Tieumi221E/Jusplay/internal/ai"
 	"github.com/Tieumi221E/Jusplay/internal/danmaku"
 	"github.com/Tieumi221E/Jusplay/internal/library"
@@ -423,39 +425,10 @@ func (s *Server) ctranslateAPI(w http.ResponseWriter, r *http.Request, p string)
 			http.Error(w, "no comments", http.StatusNotFound)
 			return
 		}
-		s.ctMu.Lock()
-		j := s.ct
-		if j == nil || j.id != req.ID || j.target != req.Target {
-			if j != nil && j.cancel != nil {
-				j.cancel()
-			}
-			if j, err = newCTJob(s, sess, e, req.Target); err != nil {
-				s.ctMu.Unlock()
-				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-				return
-			}
-			s.ct = j
+		if _, err := s.startCT(eng, sess, e, req.Target, req.Pos, req.Shown); err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
 		}
-		j.mu.Lock()
-		j.pos = req.Pos
-		if req.Shown != nil {
-			j.setShown(req.Shown)
-		}
-		pending := false
-		for _, u := range j.units {
-			if _, ok := j.done[u.shape]; !ok {
-				pending = true
-				break
-			}
-		}
-		if !j.running && (pending || len(j.glossary) < len(j.gTerms)) {
-			ctx, cancel := context.WithCancel(context.Background())
-			j.cancel = cancel
-			j.running = true
-			go j.run(ctx, eng, s.logf)
-		}
-		j.mu.Unlock()
-		s.ctMu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	case p == "api/ctranslate" && r.Method == http.MethodGet:
 		q := r.URL.Query()
@@ -503,6 +476,101 @@ func (s *Server) ctranslateAPI(w http.ResponseWriter, r *http.Request, p string)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "not found", http.StatusNotFound)
+	}
+}
+
+// startCT makes sess's translation into target the one running (another
+// one stops), moves its priority to pos, sets the comments shown (nil
+// keeps them) and starts it if anything is left to translate.
+func (s *Server) startCT(eng *ai.Engine, sess *Session, e library.Entry, target string, pos float64, shown []string) (*ctJob, error) {
+	s.ctMu.Lock()
+	defer s.ctMu.Unlock()
+	j := s.ct
+	if j == nil || j.id != sess.ID || j.target != target {
+		if j != nil && j.cancel != nil {
+			j.cancel()
+		}
+		var err error
+		if j, err = newCTJob(s, sess, e, target); err != nil {
+			return nil, err
+		}
+		s.ct = j
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.pos = pos
+	if shown != nil {
+		j.setShown(shown)
+	}
+	pending := false
+	for _, u := range j.units {
+		if _, ok := j.done[u.shape]; !ok {
+			pending = true
+			break
+		}
+	}
+	if !j.running && (pending || len(j.glossary) < len(j.gTerms)) {
+		ctx, cancel := context.WithCancel(context.Background())
+		j.cancel = cancel
+		j.running = true
+		go j.run(ctx, eng, s.logf)
+	}
+	return j, nil
+}
+
+// status is how far the translation is.
+func (j *ctJob) status() map[string]any {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	translated := 0
+	for _, u := range j.units {
+		if _, ok := j.done[u.shape]; ok {
+			translated += u.count
+		}
+	}
+	return map[string]any{"target": j.target, "running": j.running, "error": j.err, "model": j.model,
+		"lines": len(j.units), "comments": j.needN, "translatedComments": translated, "file": j.path}
+}
+
+// TranslateComments translates the comments sess shows under the saved
+// settings into target, as the player does while playing, and waits until
+// it is done (or ctx ends: the work so far is kept in the folder records).
+func (s *Server) TranslateComments(ctx context.Context, sess *Session, e library.Entry, target string) (map[string]any, error) {
+	eng := s.aiEngine()
+	if eng == nil {
+		return nil, capreg.NotFoundf("no AI support in this build")
+	}
+	if _, ok := ai.Targets[target]; !ok {
+		return nil, capreg.Usagef("unknown target %q", target)
+	}
+	res, err := s.FilterComments(sess, s.settings.Get())
+	if err != nil {
+		return nil, err
+	}
+	ts, _ := sess.threadsOf()
+	shown := []string{}
+	for i, t := range ts {
+		for _, k := range res.Keep[i] {
+			shown = append(shown, t.Comments[k].Body)
+		}
+	}
+	j, err := s.startCT(eng, sess, e, target, 0, shown)
+	if err != nil {
+		return nil, err
+	}
+	for {
+		st := j.status()
+		if running, _ := st["running"].(bool); !running {
+			if msg, _ := st["error"].(string); msg != "" {
+				return st, errors.New(msg)
+			}
+			return st, nil
+		}
+		select {
+		case <-ctx.Done():
+			return st, ctx.Err()
+		case <-time.After(300 * time.Millisecond):
+		}
 	}
 }
 

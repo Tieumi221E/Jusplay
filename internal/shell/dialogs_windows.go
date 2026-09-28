@@ -138,6 +138,7 @@ func (win *Window) bindDialogs() error {
 		},
 		"kpPickSnapshotFolder": func() string { return pickFolder(win.hwnd, "选择快照文件夹") },
 		"kpPickFolder":         func() string { return pickFolder(win.hwnd, "选择要加入媒体库的文件夹") },
+		"kpPickNotebook":       func() string { return pickFolder(win.hwnd, "选择记一笔用的 Jusnote 笔记本") },
 		"kpReveal":             func(path string) error { return reveal(path) },
 	}
 	for name, f := range binds {

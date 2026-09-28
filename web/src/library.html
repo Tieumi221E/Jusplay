@@ -11,30 +11,30 @@
 <body>
 <header id="top">
   <div id="home-slot">
-  <div id="brand" class="pill" role="link" tabindex="0" aria-label="Jusplay 首页"><img class="mark day" src="icon-64.png" alt=""><img class="mark night" src="icon-64-dark.png" alt=""><span class="label">Jusplay</span></div>
-  <div id="crumb" class="pill" inert><button id="up" class="icon" data-tip data-tip-at="below"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12 4.5 6.5 10l5.5 5.5"/></svg></button><span id="crumb-title"></span></div>
+  <div id="brand" data-cap="ui" class="pill" role="link" tabindex="0" aria-label="Jusplay 首页"><img class="mark day" src="icon-64.png" alt=""><img class="mark night" src="icon-64-dark.png" alt=""><span class="label">Jusplay</span></div>
+  <div id="crumb" class="pill" inert><button id="up" data-cap="ui" class="icon" data-tip data-tip-at="below"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12 4.5 6.5 10l5.5 5.5"/></svg></button><span id="crumb-title"></span></div>
   </div>
   <label id="search-box">
     <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg>
-    <input id="search" type="search" placeholder="搜索系列或文件名" autocomplete="off" spellcheck="false">
+    <input id="search" data-cap="ui" type="search" placeholder="搜索系列或文件名" autocomplete="off" spellcheck="false">
     <kbd>/</kbd>
   </label>
   <span class="grow"></span>
   <div id="actions" class="pill">
   <span id="scan-status" aria-live="polite"></span>
-  <button id="rescan" class="icon" data-tip data-tip-at="below" aria-label="重新扫描">
+  <button id="rescan" data-cap="library.scan" class="icon" data-tip data-tip-at="below" aria-label="重新扫描">
     <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 1 1-1.8-4.3M16 3v3.5h-3.5"/></svg>
   </button>
-  <button id="lang-switch" class="lang"></button>
-  <button id="theme-switch" class="icon"></button>
+  <button id="lang-switch" data-cap="prefs.set" class="lang"></button>
+  <button id="theme-switch" data-cap="prefs.set" class="icon"></button>
   <div class="popover-host">
-    <button id="folders-btn" class="icon" data-tip data-tip-at="below" aria-label="媒体库文件夹" aria-haspopup="true" aria-expanded="false">
+    <button id="folders-btn" data-cap="ui" class="icon" data-tip data-tip-at="below" aria-label="媒体库文件夹" aria-haspopup="true" aria-expanded="false">
       <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.5a1.5 1.5 0 0 1 1.5-1.5h3.6l1.6 1.8H16a1.5 1.5 0 0 1 1.5 1.5v7.2A1.5 1.5 0 0 1 16 16H4a1.5 1.5 0 0 1-1.5-1.5z"/></svg>
     </button>
     <div id="folders-pop" class="popover layer" hidden>
       <div class="pop-title">媒体库文件夹</div>
       <ul id="folder-list"></ul>
-      <button id="add-folder" class="wide">＋ 添加文件夹</button>
+      <button id="add-folder" data-cap="library.add" class="wide">＋ 添加文件夹</button>
     </div>
   </div>
   </div>

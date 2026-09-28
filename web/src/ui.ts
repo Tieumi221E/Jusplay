@@ -2,7 +2,7 @@
 // declarative list so every setting has one definition.
 
 import type { Settings } from "./settings.ts";
-import type { FilterStats, Rule } from "./filter.ts";
+import type { FilterStats, Rule } from "./threads.ts";
 import { L, sep } from "./i18n.ts";
 
 export const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document): T => {
@@ -290,6 +290,9 @@ function makeRow(def: Field, s: Settings, changed: () => void): Row {
   };
   setTexts();
   refresh();
+  // What the row changes (Jus contract 17): the subtitle tracks, or a setting.
+  const capOf = f.id === "subPick" || f.id === "subPick2" ? "subs.pick" : "settings.set";
+  for (const c of r.querySelectorAll<HTMLElement>("input, select, textarea")) c.dataset.cap = capOf;
   return {
     el: el("div", { class: "field" }, r),
     refresh: () => refresh(),

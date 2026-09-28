@@ -23,12 +23,12 @@
 <div id="scrim-bottom" class="scrim chrome"></div>
 <div id="topbar" class="chrome">
   <div class="pill glass" id="title-pill">
-    <button id="back" class="icon round" data-icon="back" data-tip data-key="Alt ←" data-tip-at="below"></button>
+    <button id="back" data-cap="player.back" class="icon round" data-icon="back" data-tip data-key="Alt ←" data-tip-at="below"></button>
     <div id="heading"><span id="series"></span><span id="episode"></span></div>
   </div>
 </div>
 <div id="bar" class="chrome">
-  <button id="eps-tab" class="glass" aria-controls="eps" aria-expanded="false" hidden><span></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 12 4-4 4 4"/></svg></button>
+  <button id="eps-tab" data-cap="ui" class="glass" aria-controls="eps" aria-expanded="false" hidden><span></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 12 4-4 4 4"/></svg></button>
   <div id="bar-body">
   <div id="bar-glass" class="glass"></div>
   <section id="eps" class="layer" aria-labelledby="eps-title" hidden>
@@ -40,25 +40,25 @@
     <canvas id="density"></canvas>
     <div id="track"><i id="fill"></i></div>
     <div id="playhead"><i></i></div>
-    <input id="seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="进度">
+    <input id="seek" data-cap="player.seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="进度">
   </div>
   <div id="seektip" class="glass" hidden></div>
   <div id="buttons">
-    <button id="play" class="icon big" data-icon="play" data-tip data-key="Space"></button>
+    <button id="play" data-cap="player.play player.pause" class="icon big" data-icon="play" data-tip data-key="Space"></button>
     <span id="time"></span>
     <span class="grow"></span>
     <div id="volume-group">
-      <button id="mute" class="icon" data-icon="volume" data-tip data-key="M"></button>
-      <input id="volume" class="fill" type="range" min="0" max="1" step="0.02" aria-label="音量">
+      <button id="mute" data-cap="settings.set" class="icon" data-icon="volume" data-tip data-key="M"></button>
+      <input id="volume" data-cap="settings.set" class="fill" type="range" min="0" max="1" step="0.02" aria-label="音量">
     </div>
-    <select id="rate" data-tip data-key="[ ]">
+    <select id="rate" data-cap="settings.set" data-tip data-key="[ ]">
       <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option>
       <option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option>
     </select>
-    <button id="open-subs" class="icon" data-icon="subtitles" data-tip data-key="T" aria-haspopup="dialog" aria-expanded="false"></button>
-    <button id="toggle-comments" class="icon" data-icon="comments" data-tip data-key="C"></button>
-    <button id="open-quick" class="icon" data-icon="settings" data-tip data-key="S" aria-haspopup="dialog" aria-expanded="false"></button>
-    <button id="fullscreen" class="icon" data-icon="fullscreen" data-tip data-key="F"></button>
+    <button id="open-subs" data-cap="ui" class="icon" data-icon="subtitles" data-tip data-key="T" aria-haspopup="dialog" aria-expanded="false"></button>
+    <button id="toggle-comments" data-cap="settings.set" class="icon" data-icon="comments" data-tip data-key="C"></button>
+    <button id="open-quick" data-cap="ui" class="icon" data-icon="settings" data-tip data-key="S" aria-haspopup="dialog" aria-expanded="false"></button>
+    <button id="fullscreen" data-cap="player.fullscreen" class="icon" data-icon="fullscreen" data-tip data-key="F"></button>
   </div>
   </div>
   </div>
@@ -66,23 +66,29 @@
 <div id="quick" class="glass layer" role="dialog" hidden>
   <div id="quick-body"></div>
   <div class="quick-foot">
-    <button id="open-help" class="link"></button>
-    <button id="open-report" class="link"></button>
+    <button id="open-help" data-cap="ui" class="link"></button>
+    <button id="open-report" data-cap="analysis.get" class="link"></button>
+    <button id="copy-link" data-cap="link.make" class="link" data-tip data-key="L"></button>
+    <button id="add-note" data-cap="note.add" class="link" data-tip data-key="J"></button>
     <span class="grow"></span>
-    <button id="theme-switch" class="icon"></button>
-    <button id="open-settings" class="link more"></button>
+    <button id="theme-switch" data-cap="prefs.set" class="icon"></button>
+    <button id="open-settings" data-cap="ui" class="link more"></button>
   </div>
+</div>
+<div id="note-box" class="glass layer" role="dialog" hidden>
+  <input id="note-text" data-cap="note.add" autocomplete="off" spellcheck="false">
+  <div class="note-foot"><button id="note-where" data-cap="settings.set" class="link"></button><span class="grow"></span><button id="note-save" data-cap="note.add" class="link more"></button></div>
 </div>
 <div id="subcard" class="glass layer" role="dialog" hidden>
   <div id="subcard-body"></div>
   <div class="quick-foot">
-    <button id="subcard-file" class="link"></button>
+    <button id="subcard-file" data-cap="subs.pick" class="link"></button>
     <span class="grow"></span>
-    <button id="subcard-more" class="link more"></button>
+    <button id="subcard-more" data-cap="ui" class="link more"></button>
   </div>
 </div>
 <div id="report" class="glass layer" role="dialog" aria-labelledby="report-title" hidden>
-  <header><div><strong id="report-title"></strong><span id="report-sub"></span></div><button id="report-done" class="link"></button></header>
+  <header><div><strong id="report-title"></strong><span id="report-sub"></span></div><button id="report-done" data-cap="ui" class="link"></button></header>
   <div id="report-body"></div>
   <div id="report-tip" hidden></div>
 </div>
@@ -90,34 +96,34 @@
   <header><strong>设置</strong></header>
   <section id="appearance">
     <h3>外观</h3>
-    <div class="row"><label class="lbl" id="lbl-lang">界面语言</label><button id="lang-switch" class="lang"></button></div>
+    <div class="row"><label class="lbl" id="lbl-lang">界面语言</label><button id="lang-switch" data-cap="prefs.set" class="lang"></button></div>
   </section>
   <section id="source">
     <h3>弹幕</h3>
     <div class="row"><label class="lbl">来源</label><span id="source-name"></span></div>
     <div class="hint path" id="source-path"></div>
     <div class="row buttons">
-      <button id="pick-comments">选择弹幕文件…</button>
-      <button id="pick-snapshot">快照文件夹…</button>
-      <button id="auto-comments" hidden>恢复自动</button>
+      <button id="pick-comments" data-cap="comments.source">选择弹幕文件…</button>
+      <button id="pick-snapshot" data-cap="comments.source">快照文件夹…</button>
+      <button id="auto-comments" data-cap="comments.source" hidden>恢复自动</button>
     </div>
   </section>
   <section id="sync">
     <h3>同步</h3>
     <div class="row"><label class="lbl">评论偏移</label>
-      <div class="stepper"><button data-offset="-100">−100</button><input id="offset" type="number" step="10"><span class="val">ms</span><button data-offset="100">+100</button></div></div>
+      <div class="stepper"><button data-cap="comments.offset" data-offset="-100">−100</button><input id="offset" data-cap="comments.offset" type="number" step="10"><span class="val">ms</span><button data-cap="comments.offset" data-offset="100">+100</button></div></div>
     <div class="hint" id="sync-hint"></div>
   </section>
   <div id="panel-body"></div>
   <section id="info"><h3>信息</h3><dl id="info-list"></dl>
     <div class="hint" id="live-info"></div>
-    <div class="row buttons"><button id="copy-log">复制诊断日志</button></div>
+    <div class="row buttons"><button id="copy-log" data-cap="log.get">复制诊断日志</button></div>
     <div class="hint" id="log-hint"></div></section>
 </aside>
 <div id="help" class="glass layer" role="dialog" hidden>
   <header><strong id="help-title"></strong></header>
   <dl id="help-list"></dl>
-  <div class="dialog-foot"><button id="help-done" class="primary"></button></div>
+  <div class="dialog-foot"><button id="help-done" data-cap="ui" class="primary"></button></div>
 </div>
 <script type="module" src="app.js" blocking="render"></script>
 </body>
